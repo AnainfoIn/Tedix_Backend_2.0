@@ -73,6 +73,11 @@ describeDb('admin API (e2e)', () => {
     await request(app.getHttpServer()).get('/healthcheck').expect(200, 'Ok');
   });
 
+  it('reports database status without data', async () => {
+    const res = await request(app.getHttpServer()).get('/healthcheck/db').expect(200);
+    expect(res.body).toEqual({ database: 'ok', tables: 3, adminTablesPresent: true });
+  });
+
   it('signs in with a password hashed by Rails/Devise', async () => {
     const res = await login(' Admin@Tedix.test ').expect(200);
     expect(res.body.data.otpRequired).toBe(false);
