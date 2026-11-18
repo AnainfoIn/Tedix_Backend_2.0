@@ -23,6 +23,28 @@ npm run admin:create -- you@example.com 'Password1'
 
 Existing ActiveAdmin users can sign in with their current password and 2FA codes.
 
+## Run everything with Docker (database included)
+
+The repo includes a Postgres 16 database and the API in `docker-compose.yml`.
+
+```bash
+cp .env.example .env          # set DB_PASSWORD, DB_PORT, API_PORT, ADMIN_JWT_SECRET, ADMIN_EMAIL/ADMIN_PASSWORD
+docker compose up -d --build
+```
+
+- Database: `localhost:<DB_PORT>` (default 5432), user/password/name from `.env`. Connect with psql, DBeaver, TablePlus...
+- Admin panel: `http://localhost:<API_PORT>/admin/` (default 4000), sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+- A fresh database gets the admin tables and the Admin/Teacher/Student roles from `db/init/` (runs only the first time; `docker compose down -v` wipes the data).
+- The database port only listens on this machine by default. Set `DB_BIND=0.0.0.0` to open it to other machines, with a strong password and a firewall.
+
+To load the real Rails data into this database (deletes the local data first):
+
+```bash
+SOURCE_DATABASE_URL=postgresql://user:pass@host:5432/tedix_backend ./scripts/clone-rails-db.sh
+```
+
+Docker needs a VPS or your own machine. Hostinger shared/cloud web hosting cannot run Docker or Postgres; there the app runs as a Node.js site with an external `DATABASE_URL`.
+
 ## Build and run in production
 
 ```bash
