@@ -7,10 +7,15 @@ export interface AppEnv {
   admin2faIssuer: string;
 }
 
+let warnedNoDb = false;
+
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
-  const missing = ['DATABASE_URL', 'ADMIN_JWT_SECRET'].filter((key) => !source[key]);
-  if (missing.length) {
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  if (!source.ADMIN_JWT_SECRET) {
+    throw new Error('Missing required environment variable: ADMIN_JWT_SECRET');
+  }
+  if (!source.DATABASE_URL && !warnedNoDb) {
+    warnedNoDb = true;
+    console.warn('DATABASE_URL is not set: the API starts, but every database request will fail until it is set.');
   }
   const secret = source.ADMIN_JWT_SECRET as string;
   if (source.NODE_ENV === 'production' && secret.length < 32) {
