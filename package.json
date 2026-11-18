@@ -1,0 +1,24 @@
+{
+  "name": "tedix-backend-2",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tedix backend 2.0: NestJS API and React admin panel (migration from the Rails backend)",
+  "workspaces": [
+    "apps/api",
+    "apps/admin"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node apps/api/dist/main.js",
+    "build": "npm run prisma:generate -w apps/api && npm run build -w apps/api && npm run build -w apps/admin",
+    "dev:api": "npm run start:dev -w apps/api",
+    "dev:admin": "npm run dev -w apps/admin",
+    "test": "npm test -w apps/api",
+    "test:e2e": "npm run test:e2e -w apps/api",
+    "db:pull": "npm run prisma:pull -w apps/api",
+    "admin:create": "npm run admin:create -w apps/api --"
+  },
+  "main": "apps/api/dist/main.js"
+}

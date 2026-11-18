@@ -1,0 +1,49 @@
+// Prisma schema for the Tedix database.
+//
+// The database is shared with the Rails app (AnainfoIn/Tedix_Backend) during the migration.
+// Rails migrations stay the source of truth until cutover, so NEVER run `prisma migrate`
+// or `prisma db push` against a shared database.
+//
+// Models are added module by module as each one is approved for migration.
+// To see every table, run `npm run db:pull` against a copy of the database and copy the
+// models you need from the output.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Admin panel users (Devise in Rails, table `admin_users`).
+model AdminUser {
+  id                   BigInt    @id @default(autoincrement())
+  email                String    @unique(map: "index_admin_users_on_email") @db.VarChar
+  encryptedPassword    String    @map("encrypted_password") @db.VarChar
+  resetPasswordToken   String?   @unique(map: "index_admin_users_on_reset_password_token") @map("reset_password_token") @db.VarChar
+  resetPasswordSentAt  DateTime? @map("reset_password_sent_at") @db.Timestamp(6)
+  rememberCreatedAt    DateTime? @map("remember_created_at") @db.Timestamp(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+  roleId               BigInt    @map("role_id")
+  googleSecret         String?   @map("google_secret") @db.VarChar
+  twoFactorEnabled     Boolean?  @default(false) @map("two_factor_enabled")
+  mfaSecret            String?   @map("mfa_secret") @db.VarChar
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("admin_users")
+}
+
+/// Roles shared by admin users and app accounts (table `roles`).
+model Role {
+  id         BigInt      @id @default(autoincrement())
+  name       String      @unique(map: "index_roles_on_name") @db.VarChar
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt  DateTime    @updatedAt @map("updated_at") @db.Timestamp(6)
+  adminUsers AdminUser[]
+
+  @@map("roles")
+}
