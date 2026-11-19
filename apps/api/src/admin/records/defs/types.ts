@@ -72,6 +72,8 @@ export interface FieldDef {
   unique?: { scope?: string[]; caseSensitive?: boolean; message?: string };
   /** Rails `sanitize(tags: p br strong em b i u ul ol li span, attributes: style)` before saving. */
   sanitize?: boolean;
+  /** Content written in LaTeX: the panel adds an English → LaTeX helper and a live preview. imagesOf: content image owner type for tedimage keys. */
+  latex?: { imagesOf?: string };
   normalize?: 'squish' | 'upcase' | 'downcase' | 'strip';
   hint?: string;
   /** Files: Active Storage attachment name (defaults to the column-style name), accepted types, size. */

@@ -75,7 +75,7 @@ export const CONTENTS: ResourceDef[] = [
       { name: 'name', type: 'string', required: true, min: 2, max: 100, sanitize: true, normalize: 'squish', filter: true, unique: { scope: ['lessonId'], caseSensitive: false, message: 'Name has already been taken for this lesson' } },
       { name: 'microLessonType', label: 'Type', type: 'enum', choices: labelEnum({ Video: 0, Text: 1 }), required: true, filter: true, list: false },
       { name: 'summaryVideo', label: 'Content (Video)', type: 'file', attachment: 'summary_video', required: true, when: { field: 'microLessonType', in: [0] }, ...VIDEO, hint: 'MP4, 3GP or FLV, up to 50 MB. Also used as the summary video.' },
-      { name: 'description', label: 'Content (Text)', type: 'html', required: true, max: 5000, sanitize: true, when: { field: 'microLessonType', in: [1] }, list: false },
+      { name: 'description', label: 'Content (Text)', type: 'html', required: true, max: 5000, sanitize: true, latex: { imagesOf: MICRO_LESSON }, when: { field: 'microLessonType', in: [1] }, list: false },
       { name: 'cheatsheetPdf', label: 'Cheatsheet (PDF)', type: 'file', attachment: 'cheatsheet_pdf', ...PDF },
       { name: 'summaryPdf', label: 'Summary (PDF)', type: 'file', attachment: 'summary_pdf', ...PDF },
       ...timestamps(),

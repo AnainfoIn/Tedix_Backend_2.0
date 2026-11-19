@@ -17,6 +17,7 @@ import { Link } from 'react-router-dom';
 import { ChildList, FieldDef, ResourceDef } from '../../../api/src/admin/records/defs/types';
 import { RESOURCE_BY_KEY } from '../../../api/src/admin/records/defs';
 import { CONTENT_RESOURCES } from './registry';
+import { LatexInput, LatexPreview } from '../latex/LatexInput';
 
 type Rec = Record<string, any>;
 
@@ -100,7 +101,7 @@ export function fieldDisplay(f: FieldDef, inList = false): ReactElement {
       return inList ? (
         <FunctionField key={f.name} label={label} sortable={false} render={(r: Rec) => String(r[f.name] ?? '').replace(/<[^>]+>/g, ' ').slice(0, 80)} />
       ) : (
-        <FunctionField key={f.name} label={label} render={() => <Html source={f.name} />} />
+        <FunctionField key={f.name} label={label} render={(r: Rec) => (f.latex && r[f.name] ? <LatexPreview latex={String(r[f.name])} imagesOf={f.latex.imagesOf} /> : <Html source={f.name} />)} />
       );
     case 'json':
       return <FunctionField key={f.name} label={label} sortable={false} render={(r: Rec) => (r[f.name] == null ? '' : <code>{JSON.stringify(r[f.name])}</code>)} />;
@@ -215,6 +216,7 @@ function rawInput(f: FieldDef, mode: 'create' | 'edit'): ReactElement | null {
     case 'text':
     case 'html':
     case 'json':
+      if (f.latex) return <LatexInput key={f.name} source={f.name} label={labelOf(f)} helperText={f.hint} disabled={disabled} imagesOf={f.latex.imagesOf} />;
       return <TextInput {...common} multiline minRows={f.type === 'html' ? 8 : 4} />;
     case 'image':
       return (
