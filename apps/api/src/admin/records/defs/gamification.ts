@@ -1,0 +1,73 @@
+import { indexEnum, REF } from './refs';
+import { ResourceDef, timestamps } from './types';
+
+export const GAMIFICATION: ResourceDef[] = [
+  {
+    key: 'event_points',
+    table: 'bx_block_educational_gamification_event_points',
+    label: 'Event Points',
+    singular: 'Event Point',
+    group: 'Gamification',
+    priority: 1,
+    permission: 'event_points',
+    actions: ['edit'],
+    search: ['key', 'description'],
+    fields: [
+      { name: 'categoryType', type: 'enum', choices: indexEnum('achiever', 'socializer', 'philantropist', 'explorer', 'other'), form: 'readonly', filter: true },
+      { name: 'key', type: 'string', form: 'readonly', filter: true },
+      { name: 'description', type: 'text', required: true, max: 255, filter: true },
+      { name: 'xp', label: 'XP', type: 'integer', required: true, filter: true },
+      ...timestamps(),
+    ],
+  },
+  {
+    key: 'boosters',
+    table: 'bx_block_educational_gamification_boosters',
+    label: 'Boosters',
+    singular: 'Booster',
+    group: 'Gamification',
+    priority: 2,
+    permission: 'boosters',
+    actions: ['edit'],
+    search: ['key'],
+    fields: [
+      { name: 'key', type: 'string', form: 'readonly', filter: true },
+      { name: 'description', type: 'text', required: true, max: 255, list: false },
+      {
+        name: 'durationInSeconds',
+        label: 'Duration',
+        type: 'duration',
+        required: true,
+        gt: 0,
+        filter: true,
+        hint: 'Enter duration using days, hours, mins only. Example: "2 days, 3 hours, 30 mins".',
+      },
+      ...timestamps(),
+    ],
+  },
+  {
+    key: 'main_leaderboard',
+    table: 'bx_block_educational_gamification_main_leaderboards',
+    joins:
+      'LEFT JOIN accounts a ON a.id = t.account_id LEFT JOIN bx_block_profile_profiles p ON p.account_id = t.account_id',
+    label: 'Main Leaderboard',
+    singular: 'Leaderboard entry',
+    group: 'Gamification',
+    priority: 3,
+    permission: 'main_leaderboards',
+    actions: [],
+    search: ['email', 'userName'],
+    defaultSort: { field: 'ranking', order: 'ASC' },
+    note: 'The "Update Main Leaderboard" button runs a background job in the Rails app; it moves over with the background jobs.',
+    fields: [
+      { name: 'accountId', label: 'Email', type: 'reference', ref: REF.account, filter: true },
+      { name: 'email', type: 'string', expr: 'a.email', list: false, show: false },
+      { name: 'userName', label: 'Username', type: 'string', expr: 'p.user_name', filter: true },
+      { name: 'countryId', label: 'Country', type: 'reference', ref: REF.country, expr: 'p.app_country_id', filter: true },
+      { name: 'gradeId', label: 'Grade', type: 'reference', ref: REF.grade, expr: 'p.category_id', filter: true },
+      { name: 'totalXp', label: 'XP', type: 'integer', expr: 'a.total_xp', filter: true },
+      { name: 'ranking', label: 'Rank', type: 'integer', filter: true },
+      ...timestamps(),
+    ],
+  },
+];
