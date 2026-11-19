@@ -1,26 +1,42 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('Prisma');
+  private timer?: NodeJS.Timeout;
+  private lastState?: 'connected' | 'failed';
 
   /**
-   * Connects at startup, but keeps the app running when the database is unreachable
-   * (for example before DATABASE_URL is set on a new server): /healthcheck still answers,
-   * and Prisma retries the connection on the next query.
+   * Checks the database at startup and every 5 minutes, logging only when the state changes,
+   * so the server logs show when the database becomes reachable or is lost.
+   * Not awaited: the server must call listen() quickly (Hostinger allows ~3 s), and an
+   * unreachable database would hold startup until the connection times out.
    */
   onModuleInit(): void {
-    // Not awaited: the server must call listen() quickly (Hostinger allows ~3 s), and an
-    // unreachable database would hold startup until the connection times out.
-    this.$connect().then(
-      () => this.logger.log('Database connected'),
-      (error: unknown) =>
-        this.logger.error(`Database connection failed: ${error instanceof Error ? error.message.split('\n').pop() : error}`),
-    );
+    void this.check();
+    this.timer = setInterval(() => void this.check(), CHECK_INTERVAL_MS);
+    this.timer.unref();
   }
 
   async onModuleDestroy(): Promise<void> {
+    if (this.timer) clearInterval(this.timer);
     await this.$disconnect();
+  }
+
+  private async check(): Promise<void> {
+    try {
+      await this.$queryRaw`SELECT 1`;
+      if (this.lastState !== 'connected') this.logger.log('Database connected');
+      this.lastState = 'connected';
+    } catch (error) {
+      if (this.lastState !== 'failed') {
+        const message = error instanceof Error ? error.message.trim().split('\n').pop() : String(error);
+        this.logger.error(`Database connection failed: ${message}`);
+      }
+      this.lastState = 'failed';
+    }
   }
 }
