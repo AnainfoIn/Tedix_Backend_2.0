@@ -12,7 +12,12 @@ import { hashPassword } from '../admin/auth/password';
 export async function bootstrapAdmin(prisma: PrismaClient, logger: Logger, env = process.env): Promise<void> {
   const email = env.ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
   const password = env.ADMIN_BOOTSTRAP_PASSWORD;
-  if (!email || !password) return;
+  if (!email && !password) return;
+  if (!email || !password) {
+    logger.warn('Admin bootstrap skipped: set both ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD.');
+    return;
+  }
+  logger.log(`Admin bootstrap: setting up ${email}`);
 
   // Never create tables here: the database comes from the Rails app (a restore of its dump).
   // Tables made here earlier clashed with that restore.
@@ -28,10 +33,13 @@ export async function bootstrapAdmin(prisma: PrismaClient, logger: Logger, env =
     (await prisma.role.findFirst({ where: { name: { equals: 'Admin', mode: 'insensitive' } } })) ??
     (await prisma.role.create({ data: { name: 'Admin' } }));
   const encryptedPassword = await hashPassword(password);
-  await prisma.adminUser.upsert({
-    where: { email },
-    create: { email, encryptedPassword, roleId: role.id },
-    update: { encryptedPassword, roleId: role.id },
-  });
+  const data = { encryptedPassword, roleId: role.id };
+  try {
+    await prisma.adminUser.upsert({ where: { email }, create: { email, ...data }, update: data });
+  } catch (error) {
+    // Two app processes can start together and race to create the same admin: the loser updates.
+    if ((error as { code?: string }).code !== 'P2002') throw error;
+    await prisma.adminUser.update({ where: { email }, data });
+  }
   logger.log(`Admin bootstrap done for ${email}. Remove ADMIN_BOOTSTRAP_PASSWORD from the environment.`);
 }
