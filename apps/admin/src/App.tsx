@@ -1,12 +1,21 @@
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import BadgeIcon from '@mui/icons-material/Badge';
-import { Admin, Resource } from 'react-admin';
+import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import PublicIcon from '@mui/icons-material/Public';
+import { Route } from 'react-router-dom';
+import { Admin, CustomRoutes, Layout, LayoutProps, Resource } from 'react-admin';
 import { authProvider } from './authProvider';
+import { ContentsTree } from './contents/ContentsTree';
+import { LEVEL_ORDER, LEVELS } from './contents/levels';
+import { CONTENT_PAGES } from './contents/pages';
 import { Dashboard } from './Dashboard';
 import { dataProvider } from './dataProvider';
 import { LoginPage } from './LoginPage';
+import { AppMenu } from './Menu';
 import { AdminUserCreate, AdminUserEdit, AdminUserList, AdminUserShow } from './resources/adminUsers';
 import { RoleEdit, RoleList, RoleShow } from './resources/roles';
+
+const AppLayout = (props: LayoutProps) => <Layout {...props} menu={AppMenu} />;
 
 /**
  * Tedix admin panel. Each module migrated from ActiveAdmin adds its <Resource> here.
@@ -20,9 +29,23 @@ export function App() {
       dataProvider={dataProvider}
       loginPage={LoginPage}
       dashboard={Dashboard}
+      layout={AppLayout}
       requireAuth
       disableTelemetry
     >
+      <CustomRoutes>
+        <Route path="/contents" element={<ContentsTree />} />
+      </CustomRoutes>
+      {LEVEL_ORDER.map((key) => (
+        <Resource
+          key={key}
+          name={key}
+          options={{ label: LEVELS[key].plural }}
+          icon={key === 'countries' ? PublicIcon : FolderOpenIcon}
+          {...CONTENT_PAGES[key]}
+          recordRepresentation="name"
+        />
+      ))}
       <Resource
         name="admin_users"
         options={{ label: 'Admin Users' }}

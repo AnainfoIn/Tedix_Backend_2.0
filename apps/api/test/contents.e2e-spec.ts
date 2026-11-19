@@ -235,3 +235,25 @@ describeDb('contents admin API (e2e)', () => {
     await api('viewer').del(`/lessons/${ids.l1}`).expect(403);
   });
 });
+
+describeDb('contents admin API without the tables (e2e)', () => {
+  it('answers 503 with a plain message', async () => {
+    process.env.DATABASE_URL = DB;
+    process.env.ADMIN_JWT_SECRET = 'test-secret-test-secret-test-secret';
+    const prisma = new PrismaClient({ datasourceUrl: DB });
+    await prisma.$executeRawUnsafe('ALTER TABLE bx_block_profile_mains RENAME TO mains_hidden');
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const app = moduleRef.createNestApplication();
+    setupApp(app, { serveAdmin: false });
+    await app.init();
+    try {
+      const login = await request(app.getHttpServer()).post('/admin/api/auth/login').send({ email: 'admin@tedix.test', password: 'secret123' });
+      const res = await request(app.getHttpServer()).get('/admin/api/mains').set({ Authorization: `Bearer ${login.body.data.token}` }).expect(503);
+      expect(res.body.message).toMatch(/database has no .*bx_block_profile_mains.* table yet/);
+    } finally {
+      await prisma.$executeRawUnsafe('ALTER TABLE mains_hidden RENAME TO bx_block_profile_mains');
+      await app.close();
+      await prisma.$disconnect();
+    }
+  });
+});

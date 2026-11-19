@@ -55,6 +55,17 @@ npm start         # node apps/api/dist/main.js, serves /admin and /admin/api
 
 Environment variables are listed in `apps/api/.env.example`. `DATABASE_URL` and `ADMIN_JWT_SECRET` are required.
 
+### Contents (Countries to Lessons)
+
+The admin's Contents section uses the Rails tables (`account_block_countries`, `categories`, `sub_categories`,
+`bx_block_profile_courses`, `_mains`, `_units`, `_lessons`) and Active Storage for icons and materials.
+
+- A database without the Rails data can get empty tables with `psql "$DATABASE_URL" -f db/content-schema.sql`
+  (it only creates what is missing). Until then the Contents pages answer "not ready".
+- Files go to the same S3 bucket as Rails. Set `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_ACCESS_KEY`, `STORAGE_BUCKET`,
+  `STORAGE_ENDPOINT` and `STORAGE_REGION` (the Rails app's values). Without them, pages work but files can't be
+  shown or uploaded.
+
 ## Tests
 
 ```bash

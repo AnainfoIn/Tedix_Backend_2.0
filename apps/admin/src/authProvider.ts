@@ -4,8 +4,16 @@ import { apiFetch, getSession, saveSession, Session } from './api';
 /** Actions react-admin asks about, mapped to the API's read/manage permissions. */
 const READ_ACTIONS = new Set(['list', 'show', 'export']);
 
-export function canAccess(session: Session | null, action: string, resource: string): boolean {
+/** Panel resources whose permission key differs (the Rails CanCan names). */
+const PERMISSION_KEY: Record<string, string> = {
+  grades: 'categories',
+  subjects: 'sub_categories',
+  masters: 'courses',
+};
+
+export function canAccess(session: Session | null, action: string, panelResource: string): boolean {
   if (!session) return false;
+  const resource = PERMISSION_KEY[panelResource] ?? panelResource;
   const p = session.admin.permissions;
   if (resource === 'dashboard' || p.manageAll) return true;
   if (p.manage.includes(resource)) return true;
