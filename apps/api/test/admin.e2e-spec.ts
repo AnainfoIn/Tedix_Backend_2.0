@@ -73,6 +73,16 @@ describeDb('admin API (e2e)', () => {
     await request(app.getHttpServer()).get('/healthcheck').expect(200, 'Ok');
   });
 
+  it('bootstraps an admin from environment variables', async () => {
+    const { bootstrapAdmin } = await import('../src/prisma/bootstrap-admin');
+    const { Logger } = await import('@nestjs/common');
+    await bootstrapAdmin(prisma, new Logger('test'), { ADMIN_BOOTSTRAP_EMAIL: 'Boot@Tedix.test', ADMIN_BOOTSTRAP_PASSWORD: 'bootpass1' });
+    await login('boot@tedix.test', 'bootpass1').expect(200);
+    await bootstrapAdmin(prisma, new Logger('test'), { ADMIN_BOOTSTRAP_EMAIL: 'boot@tedix.test', ADMIN_BOOTSTRAP_PASSWORD: 'bootpass2' });
+    await login('boot@tedix.test', 'bootpass2').expect(200);
+    await prisma.adminUser.delete({ where: { email: 'boot@tedix.test' } });
+  });
+
   it('reports database status without data', async () => {
     const res = await request(app.getHttpServer()).get('/healthcheck/db').expect(200);
     expect(res.body).toEqual({ database: 'ok', tables: 3, adminTablesPresent: true });
