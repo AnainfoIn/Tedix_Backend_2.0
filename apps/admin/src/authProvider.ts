@@ -1,4 +1,5 @@
 import { AuthProvider } from 'react-admin';
+import { RESOURCES } from '../../api/src/admin/records/defs';
 import { apiFetch, getSession, saveSession, Session } from './api';
 
 /** Actions react-admin asks about, mapped to the API's read/manage permissions. */
@@ -9,6 +10,7 @@ const PERMISSION_KEY: Record<string, string> = {
   grades: 'categories',
   subjects: 'sub_categories',
   masters: 'courses',
+  ...Object.fromEntries(RESOURCES.map((r) => [r.key, r.permission])),
 };
 
 export function canAccess(session: Session | null, action: string, panelResource: string): boolean {

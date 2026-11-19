@@ -44,19 +44,19 @@ function listQuery(params: {
   return query.toString();
 }
 
-/** File fields of the Contents levels (Active Storage attachments). */
-export const FILE_KEYS = ['image', 'cheatsheetPdf', 'summaryPdf', 'summaryVideo'] as const;
-
-type FileValue = { url?: string | null; filename?: string; rawFile?: File; src?: string; title?: string };
+type FileValue = { url?: string | null; filename?: string; byteSize?: number; rawFile?: File; src?: string; title?: string };
 type AnyRecord = Record<string, unknown>;
+
+/** A stored Active Storage file as the API returns it, or one picked in a file input. */
+const isFileValue = (value: unknown): value is FileValue =>
+  !!value && typeof value === 'object' && ('rawFile' in value || ('filename' in value && 'byteSize' in value));
 
 /** Gives stored files the `src`/`title` that react-admin's FileInput and ImageInput preview. */
 function withFilePreviews<T>(record: T): T {
   if (!record || typeof record !== 'object') return record;
   const out = { ...(record as AnyRecord) };
-  for (const key of FILE_KEYS) {
-    const file = out[key] as FileValue | null | undefined;
-    if (file && !file.rawFile) out[key] = { ...file, src: file.url ?? undefined, title: file.filename };
+  for (const [key, value] of Object.entries(out)) {
+    if (isFileValue(value) && !value.rawFile) out[key] = { ...value, src: value.url ?? undefined, title: value.filename };
   }
   return out as T;
 }
@@ -65,7 +65,8 @@ function withFilePreviews<T>(record: T): T {
 function body(data: AnyRecord, previous?: AnyRecord): string | FormData {
   const payload: AnyRecord = { ...data };
   let hasFile = false;
-  for (const key of FILE_KEYS) {
+  const fileKeys = new Set([...Object.keys(payload), ...Object.keys(previous ?? {})].filter((k) => isFileValue(payload[k]) || isFileValue(previous?.[k])));
+  for (const key of fileKeys) {
     if (!(key in payload)) continue;
     const value = payload[key] as FileValue | null;
     delete payload[key];

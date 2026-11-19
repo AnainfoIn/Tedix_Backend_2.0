@@ -1,6 +1,7 @@
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import BadgeIcon from '@mui/icons-material/Badge';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
+import ListAltIcon from '@mui/icons-material/ListAlt';
 import PublicIcon from '@mui/icons-material/Public';
 import { Route } from 'react-router-dom';
 import { Admin, CustomRoutes, Layout, LayoutProps, Resource } from 'react-admin';
@@ -12,6 +13,8 @@ import { Dashboard } from './Dashboard';
 import { dataProvider } from './dataProvider';
 import { LoginPage } from './LoginPage';
 import { AppMenu } from './Menu';
+import { RESOURCES } from '../../api/src/admin/records/defs';
+import { pagesFor } from './records/pages';
 import { AdminUserCreate, AdminUserEdit, AdminUserList, AdminUserShow } from './resources/adminUsers';
 import { RoleEdit, RoleList, RoleShow } from './resources/roles';
 
@@ -64,6 +67,16 @@ export function App() {
         edit={RoleEdit}
         recordRepresentation="name"
       />
+      {RESOURCES.map((def) => (
+        <Resource
+          key={def.key}
+          name={def.key}
+          options={{ label: def.label }}
+          icon={ListAltIcon}
+          {...pagesFor(def)}
+          recordRepresentation={def.representation ?? 'id'}
+        />
+      ))}
     </Admin>
   );
 }
