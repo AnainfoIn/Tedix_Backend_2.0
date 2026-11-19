@@ -394,6 +394,22 @@ describeDb('generic admin resources (e2e)', () => {
     expect(await prisma.$queryRawUnsafe('SELECT id FROM action_text_rich_texts')).toEqual([]);
   });
 
+  it('serves the analytics pages', async () => {
+    const users = await api().get('/analytics/app-users?country=Romania');
+    expect(users.status).toBe(200);
+    expect(users.body.data).toMatchObject({ source: 'db', country: 'Romania' });
+    expect(users.body.data.sections[0].title).toBe('Overview — Romania');
+    expect(users.body.data.sections[0].blocks[0].items[0].label).toBe('All Users');
+    const subs = await api('viewer').get('/analytics/subscriptions');
+    expect(subs.body.data.sections[0].blocks[0].items.map((k: { label: string }) => k.label))
+      .toEqual(['Total Amount Collected', 'Monthly Subscribers', 'Yearly Subscribers']);
+    const ga4 = await api().get('/analytics/lessons?preset=last_7_days');
+    expect(ga4.body.data).toMatchObject({ source: 'ga4', sections: [], range: { preset: 'last_7_days', days: 7 } });
+    expect(ga4.body.data.unavailable.message).toContain('GA4_PROPERTY_ID');
+    expect((await api().get('/analytics/nope')).status).toBe(400);
+    expect((await api('sub').get('/analytics/app-users')).status).toBe(403);
+  });
+
   it('applies the CanCan roles', async () => {
     expect((await api('viewer').get('/cities')).status).toBe(200);
     expect((await api('viewer').post('/cities', { name: 'Iasi', countryId })).status).toBe(403);

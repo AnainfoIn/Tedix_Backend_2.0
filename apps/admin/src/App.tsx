@@ -4,6 +4,7 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import PublicIcon from '@mui/icons-material/Public';
 import { Route } from 'react-router-dom';
+import { AnalyticsPage } from './analytics/AnalyticsPage';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import { NotificationCreate, NotificationEdit, NotificationList, NotificationShow } from './resources/notifications';
 import { Admin, CustomRoutes, Layout, LayoutProps, Resource } from 'react-admin';
@@ -40,6 +41,7 @@ export function App() {
     >
       <CustomRoutes>
         <Route path="/contents" element={<ContentsTree />} />
+        <Route path="/analytics/:page" element={<AnalyticsPage />} />
       </CustomRoutes>
       {LEVEL_ORDER.map((key) => (
         <Resource

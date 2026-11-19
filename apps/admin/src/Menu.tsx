@@ -1,3 +1,5 @@
+import InsightsIcon from '@mui/icons-material/Insights';
+import { ANALYTICS_PAGES } from './analytics/AnalyticsPage';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
@@ -21,6 +23,9 @@ function menuEntries(): Map<string, Entry[]> {
   add('Contents', { route: '/contents', label: 'Contents tree', icon: <AccountTreeIcon />, permission: 'contents', priority: 0 });
   LEVEL_ORDER.forEach((key, i) => add('Contents', { resource: key, priority: i + 1 }));
   add('Notifications', { resource: 'notifications', priority: 1 });
+  ANALYTICS_PAGES.forEach((p, i) =>
+    add('Analytics', { route: `/analytics/${p.key}`, label: p.label, icon: <InsightsIcon />, permission: 'analytics', priority: i + 1 }),
+  );
   for (const def of RESOURCES) if (!def.hidden) add(def.group, { resource: def.key, priority: def.priority });
   for (const list of groups.values()) list.sort((a, b) => a.priority - b.priority);
   return groups;
