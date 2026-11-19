@@ -4,6 +4,7 @@ import { StorageService, UploadedFile } from '../../storage/storage.service';
 import { baseError, FieldErrors, throwIfErrors } from '../../common/validation-error';
 import { columnOf, FieldDef, ResourceDef } from './defs/types';
 import { HOOKS, HookContext } from './hooks';
+import { sanitizeHtml } from './sanitize';
 import './rules';
 
 type Row = Record<string, any>;
@@ -555,6 +556,7 @@ function parseValue(f: FieldDef, raw: unknown): { value?: unknown; error?: strin
     case 'text':
     case 'url': {
       let s = String(raw);
+      if (f.sanitize) s = sanitizeHtml(s);
       if (f.normalize === 'squish') s = s.trim().replace(/\s+/g, ' ');
       else if (f.normalize === 'upcase') s = s.trim().toUpperCase();
       else if (f.normalize === 'downcase') s = s.trim().toLowerCase();
@@ -611,6 +613,6 @@ function parseValue(f: FieldDef, raw: unknown): { value?: unknown; error?: strin
       }
       return { value: JSON.stringify(raw) };
     default:
-      return { value: raw };
+      return { value: f.sanitize && typeof raw === 'string' ? sanitizeHtml(raw) : raw };
   }
 }

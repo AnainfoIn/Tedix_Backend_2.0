@@ -301,6 +301,58 @@ describeDb('generic admin resources (e2e)', () => {
     expect((await api().put(`/user_subscriptions/${subs.body.data[0].id}`, { status: 'canceled' })).status).toBe(405);
   });
 
+  it('builds micro lessons with exercises, question banks, options and images', async () => {
+    const [lesson] = await prisma.$queryRawUnsafe<Record<string, bigint>[]>('SELECT id, country_id, category_id, sub_category_id, course_id, main_id, unit_id FROM bx_block_profile_lessons WHERE id = 1');
+    const c = lesson.country_id, g = lesson.category_id, s = lesson.sub_category_id;
+    await prisma.$executeRawUnsafe(`INSERT INTO bx_block_profile_courses (id, course_name, country_id, category_id, sub_category_id, created_at, updated_at) VALUES (${lesson.course_id}, 'Algebra', ${c}, ${g}, ${s}, now(), now())`);
+    await prisma.$executeRawUnsafe(`INSERT INTO bx_block_profile_mains (id, name, course_id, country_id, category_id, sub_category_id, created_at, updated_at) VALUES (${lesson.main_id}, 'Basics', ${lesson.course_id}, ${c}, ${g}, ${s}, now(), now())`);
+    await prisma.$executeRawUnsafe(`INSERT INTO bx_block_profile_units (id, name, main_id, course_id, country_id, category_id, sub_category_id, created_at, updated_at) VALUES (${lesson.unit_id}, 'Unit 1', ${lesson.main_id}, ${lesson.course_id}, ${c}, ${g}, ${s}, now(), now())`);
+    const tree = {
+      countryId: Number(c), categoryId: Number(g), subCategoryId: Number(s), courseId: Number(lesson.course_id),
+      mainId: Number(lesson.main_id), unitId: Number(lesson.unit_id), lessonId: 1,
+    };
+    const text = await api().post('/micro_lessons', { ...tree, name: 'Fractions', microLessonType: 1 });
+    expect(text.body.errors).toEqual({ description: ["Content (Text) can't be blank"] });
+    const video = await api().post('/micro_lessons', { ...tree, name: 'Fractions', microLessonType: 0 });
+    expect(video.body.errors).toEqual({ summaryVideo: ['Content (Video) must be attached'] });
+    const ml = await api().post('/micro_lessons', { ...tree, name: '  <b>Fractions</b>  ', microLessonType: 1, description: '<p onclick="x()">Hi <script>alert(1)</script><a href="y">there</a></p>' });
+    expect(ml.status).toBe(201);
+    expect(ml.body.data).toMatchObject({ name: '<b>Fractions</b>', description: '<p>Hi there</p>', position: 1, path: 'Romania/Grade 5/Math/Algebra/Basics/Unit 1/L1' });
+    expect((await api().post('/micro_lessons', { ...tree, name: '<b>fractions</b>', microLessonType: 1, description: 'x' })).body.errors.name).toEqual(['Name has already been taken for this lesson']);
+    const mlId = ml.body.data.id;
+
+    const exercise = await api().post('/exercises', { microLessonId: mlId, name: 'Practice', categoryType: 0 });
+    expect(exercise.status).toBe(201);
+    const [copied] = await prisma.$queryRawUnsafe<{ unit_id: bigint; lesson_id: bigint }[]>(`SELECT unit_id, lesson_id FROM bx_block_assessmenttest_assessments WHERE id = ${exercise.body.data.id}`);
+    expect(copied).toEqual({ unit_id: lesson.unit_id, lesson_id: 1n });
+    const qb = await api().post('/question_banks', { assessmentId: exercise.body.data.id, questionbankType: 'regular', questionType: 11, question: 'Next?', hint: 'h', solution: 's' });
+    expect(qb.status).toBe(201);
+    expect((await api().post('/option_groups', { questionbankId: qb.body.data.id })).body.errors.shapeType).toEqual(['Shape must exist']);
+    const group = await api().post('/option_groups', { questionbankId: qb.body.data.id, shapeType: 'triangle' });
+    expect((await api().post('/answer_options', { answerOptionGroupId: group.body.data.id, option: '<p>3</p>', sequenceNumber: 1, isCorrect: true })).status).toBe(201);
+    expect((await api().get(`/option_groups/${group.body.data.id}`)).body.data.optionsText).toBe('3 ✓');
+    expect((await api().post('/variables', { questionbankId: qb.body.data.id, name: 'a', valueType: 'integer' })).status).toBe(201);
+    expect((await api().post('/variables', { questionbankId: qb.body.data.id, name: 'A', valueType: 'integer' })).body.errors.name).toEqual(['Variable Name has already been taken']);
+
+    const image = await request(app.getHttpServer()).post('/admin/api/content_images').set({ Authorization: `Bearer ${tokens.admin}` })
+      .field('contentableType', 'BxBlockProfile::MicroSummary').field('summaryOfMicroLessonId', String(mlId)).field('keyName', 'pie')
+      .attach('image', PNG, { filename: 'pie.png', contentType: 'image/png' });
+    expect(image.status).toBe(201);
+    expect(image.body.data).toMatchObject({ contentableType: 'BxBlockProfile::MicroSummary', summaryOfMicroLessonId: mlId, parentPath: `micro_lessons/${mlId}`, attrName: 'Description' });
+    expect((await api().get(`/content_images?contentableType=BxBlockProfile::MicroSummary&summaryOfMicroLessonId=${mlId}`)).body.total).toBe(1);
+    expect((await api().post('/content_images', { keyName: 'orphan' })).body.errors.base).toEqual(['Add content images from a micro lesson or question bank page']);
+
+    expect((await api().del(`/exercises/${exercise.body.data.id}`)).body.message).toBe('Cannot delete record because dependent questionbanks exist');
+    expect((await api().del(`/micro_lessons/${mlId}`)).body.message).toBe('Cannot delete record because dependent assessments exist');
+    await prisma.$executeRawUnsafe('DELETE FROM bx_block_assessmenttest_assessments');
+    expect((await api().del(`/micro_lessons/${mlId}`)).body.message).toBe('Cannot delete record because dependent micro summaries exist');
+    expect((await api().del(`/content_images/${image.body.data.id}`)).status).toBe(200);
+    expect((await api().del(`/micro_lessons/${mlId}`)).status).toBe(200);
+    expect(await prisma.$queryRawUnsafe('SELECT id FROM bx_block_profile_micro_summaries')).toEqual([]);
+    expect((await api('sub').get('/exercises')).status).toBe(200);
+    expect((await api('sub').post('/exercises', { name: 'x' })).status).toBe(403);
+  });
+
   it('applies the CanCan roles', async () => {
     expect((await api('viewer').get('/cities')).status).toBe(200);
     expect((await api('viewer').post('/cities', { name: 'Iasi', countryId })).status).toBe(403);

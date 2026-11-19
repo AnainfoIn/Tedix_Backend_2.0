@@ -1,3 +1,4 @@
+import { CONTENTS } from './contents';
 import { GAMIFICATION } from './gamification';
 import { LEADERBOARD } from './leaderboard';
 import { LEADERSHIP } from './leadership';
@@ -9,7 +10,7 @@ import { MenuGroup, ResourceDef } from './types';
 export * from './types';
 
 /** Every generic resource, in no particular order (the menu orders them). */
-export const RESOURCES: ResourceDef[] = [...PEOPLE, ...GAMIFICATION, ...SUBSCRIPTION, ...LEADERSHIP, ...LEADERBOARD, ...SUPPORT];
+export const RESOURCES: ResourceDef[] = [...PEOPLE, ...CONTENTS, ...GAMIFICATION, ...SUBSCRIPTION, ...LEADERSHIP, ...LEADERBOARD, ...SUPPORT];
 
 export const RESOURCE_BY_KEY: Record<string, ResourceDef> = Object.fromEntries(RESOURCES.map((r) => [r.key, r]));
 

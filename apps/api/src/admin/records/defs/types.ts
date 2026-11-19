@@ -50,6 +50,13 @@ export interface FieldDef {
   list?: boolean;
   /** Shown on the detail page (default true). */
   show?: boolean;
+  /**
+   * Dropdown that depends on other fields of the form, like the Rails cascading selects:
+   * filter key on the referenced list → form field. Disabled until those are picked.
+   */
+  cascade?: Record<string, string>;
+  /** Fields cleared when this one changes (the dropdowns below it in a cascade). */
+  resets?: string[];
   /** In the form: true (editable), 'readonly' (shown but disabled), 'create' (editable on create, disabled after), 'edit' (only on edit), false. */
   form?: boolean | 'readonly' | 'create' | 'edit';
   /** Offered as a list filter. */
@@ -63,6 +70,8 @@ export interface FieldDef {
   gt?: number;
   pattern?: { regex: string; message: string };
   unique?: { scope?: string[]; caseSensitive?: boolean; message?: string };
+  /** Rails `sanitize(tags: p br strong em b i u ul ol li span, attributes: style)` before saving. */
+  sanitize?: boolean;
   normalize?: 'squish' | 'upcase' | 'downcase' | 'strip';
   hint?: string;
   /** Files: Active Storage attachment name (defaults to the column-style name), accepted types, size. */
@@ -85,6 +94,8 @@ export interface ChildList {
   label: string;
   /** Child fields shown as columns. */
   columns: string[];
+  /** Extra fixed filter and prefill (polymorphic links, e.g. contentableType). */
+  fixed?: Record<string, string | number>;
 }
 
 export type MenuGroup =
@@ -148,6 +159,8 @@ export interface ResourceDef {
   /** Not in the left menu (ActiveAdmin `menu false`): reached from links on other pages. */
   hidden?: boolean;
   children?: ChildList[];
+  /** After saving or deleting, go back to the parent's page (Rails redirect_to the micro lesson). */
+  returnTo?: { field: string; resource: string } | { pathField: string };
 }
 
 /** Column name for a field. */

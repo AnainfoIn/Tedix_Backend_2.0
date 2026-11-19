@@ -12,6 +12,7 @@ import {
   useCanAccess, useDataProvider, useNotify, useRecordContext, useRefresh, useResourceContext, Button, RecordContextProvider,
   ResourceContextProvider,
 } from 'react-admin';
+import { useFormContext, useWatch } from 'react-hook-form';
 import { Link } from 'react-router-dom';
 import { ChildList, FieldDef, ResourceDef } from '../../../api/src/admin/records/defs/types';
 import { RESOURCE_BY_KEY } from '../../../api/src/admin/records/defs';
@@ -118,6 +119,39 @@ export function fieldDisplay(f: FieldDef, inList = false): ReactElement {
 
 // ------------------------------------------------------------------ inputs
 
+/** Reference dropdown filtered by other form fields (FieldDef.cascade); clears the ones below on change. */
+function CascadeInput({ f }: { f: FieldDef }) {
+  const { setValue } = useFormContext();
+  const sources = Object.values(f.cascade!);
+  const values = useWatch({ name: sources }) as unknown[];
+  const filter = Object.fromEntries(Object.keys(f.cascade!).map((key, i) => [key, values[i]]));
+  const missing = sources.findIndex((_, i) => values[i] == null || values[i] === '');
+  const optionText = f.ref!.labelColumn === 'course_name' ? 'name' : camel(f.ref!.labelColumn);
+  return (
+    <ReferenceInput source={f.name} reference={f.ref!.resource!} perPage={500} filter={filter} enableGetChoices={() => missing === -1} sort={{ field: optionText, order: 'ASC' }}>
+      <AutocompleteInput
+        label={labelOf(f)}
+        optionText={optionText}
+        disabled={missing !== -1}
+        helperText={missing !== -1 ? 'Pick the fields above first' : f.hint}
+        onChange={() => (f.resets ?? []).forEach((name) => setValue(name, null, { shouldDirty: true }))}
+        fullWidth
+      />
+    </ReferenceInput>
+  );
+}
+
+/** Top of a cascade: a plain dropdown that clears the ones below it. */
+function ResettingReference({ f }: { f: FieldDef }) {
+  const { setValue } = useFormContext();
+  const optionText = f.ref!.labelColumn === 'course_name' ? 'name' : camel(f.ref!.labelColumn);
+  return (
+    <ReferenceInput source={f.name} reference={f.ref!.resource!} perPage={500} sort={{ field: optionText, order: 'ASC' }}>
+      <AutocompleteInput label={labelOf(f)} optionText={optionText} helperText={f.hint} onChange={() => (f.resets ?? []).forEach((name) => setValue(name, null, { shouldDirty: true }))} fullWidth />
+    </ReferenceInput>
+  );
+}
+
 function referenceInput(f: FieldDef, extra: Rec = {}) {
   const target = f.ref!.resource!;
   const optionText = f.ref!.labelColumn === 'course_name' ? 'name' : camel(f.ref!.labelColumn);
@@ -172,7 +206,10 @@ function rawInput(f: FieldDef, mode: 'create' | 'edit'): ReactElement | null {
     }
     case 'reference':
       if (!hasPage(f.ref?.resource)) return <NumberInput {...common} label={`${labelOf(f)} (ID)`} />;
-      return disabled ? <TextInput {...common} source={`${f.name}Label`} /> : referenceInput(f);
+      if (disabled) return <TextInput {...common} source={`${f.name}Label`} />;
+      if (f.cascade) return <CascadeInput key={f.name} f={f} />;
+      if (f.resets) return <ResettingReference key={f.name} f={f} />;
+      return referenceInput(f);
     case 'duration':
       return <TextInput {...common} source={mode === 'edit' ? `${f.name}Text` : f.name} />;
     case 'text':
@@ -294,7 +331,7 @@ function ShowActions({ def }: { def: ResourceDef }) {
   return (
     <TopToolbar>
       {def.actions.includes('edit') && <EditButton />}
-      {def.actions.includes('delete') && <DeleteWithConfirmButton confirmTitle={`Delete this ${def.singular.toLowerCase()}?`} />}
+      {def.actions.includes('delete') && <DeleteButton def={def} />}
     </TopToolbar>
   );
 }
@@ -304,13 +341,20 @@ export function makeShow(def: ResourceDef) {
     <Show actions={<ShowActions def={def} />} title={<RecordTitle def={def} />}>
       <SimpleShowLayout>
         <TextField source="id" label="ID" />
-        {def.fields.filter((f) => f.show !== false).map((f) => fieldDisplay(f))}
+        {def.fields.filter((f) => f.show !== false).map((f) => (f.when ? <WhenShown key={f.name} f={f} label={false} /> : fieldDisplay(f)))}
         {def.position && <TextField source="position" />}
       </SimpleShowLayout>
-      {(def.children ?? []).map((c) => <ChildPanel key={c.resource} child={c} />)}
+      {(def.children ?? []).map((c) => <ChildPanel key={`${c.resource}-${c.label}`} child={c} />)}
     </Show>
   );
   return RecordShow;
+}
+
+/** A field that only applies for some values (FieldDef.when) is left out of the detail page otherwise. */
+function WhenShown({ f }: { f: FieldDef; label?: false }) {
+  const record = useRecordContext<Rec>();
+  if (!record || !f.when!.in.some((v) => String(v) === String(record[f.when!.field]))) return null;
+  return <Labeled label={labelOf(f)}>{fieldDisplay(f)}</Labeled>;
 }
 
 /** Records of another resource that belong to this one (e.g. a shield's shadow categories), with an Add button. */
@@ -320,7 +364,7 @@ function ChildPanel({ child }: { child: ChildList }) {
   const { canAccess: canAdd } = useCanAccess({ resource: child.resource, action: 'create' });
   const { data, isPending } = useGetList(
     child.resource,
-    { filter: { [child.field]: record?.id }, pagination: { page: 1, perPage: 200 }, sort: def?.position ? { field: 'position', order: 'ASC' } : { field: 'id', order: 'ASC' } },
+    { filter: { ...child.fixed, [child.field]: record?.id }, pagination: { page: 1, perPage: 200 }, sort: def?.position ? { field: 'position', order: 'ASC' } : { field: 'id', order: 'ASC' } },
     { enabled: !!record && !!def },
   );
   if (!record || !def) return null;
@@ -331,8 +375,8 @@ function ChildPanel({ child }: { child: ChildList }) {
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
           <Typography variant="h6">{child.label}</Typography>
           {canAdd && def.actions.includes('create') && (
-            <Button component={Link} to={`/${child.resource}/create?source=${encodeURIComponent(JSON.stringify({ [child.field]: record.id }))}`} startIcon={<AddIcon />} variant="outlined" size="small">
-              Add {def.singular}
+            <Button component={Link} to={`/${child.resource}/create?source=${encodeURIComponent(JSON.stringify({ ...child.fixed, [child.field]: record.id }))}`} variant="outlined" size="small" label={`Add ${def.singular}`}>
+              <AddIcon />
             </Button>
           )}
         </Stack>
@@ -360,8 +404,8 @@ function ChildPanel({ child }: { child: ChildList }) {
                         {def.position && <MoveButtons def={def} />}
                       </ResourceContextProvider>
                     </RecordContextProvider>
-                    <Button component={Link} to={`/${child.resource}/${row.id}/show`} size="small">View</Button>
-                    {def.actions.includes('edit') && <Button component={Link} to={`/${child.resource}/${row.id}`} size="small">Edit</Button>}
+                    <Button component={Link} to={`/${child.resource}/${row.id}/show`} size="small" label="View" />
+                    {def.actions.includes('edit') && <Button component={Link} to={`/${child.resource}/${row.id}`} size="small" label="Edit" />}
                   </TableCell>
                 </TableRow>
               ))}
@@ -382,9 +426,15 @@ function RecordTitle({ def }: { def: ResourceDef }) {
 const FormToolbar = ({ def, mode }: { def: ResourceDef; mode: 'create' | 'edit' }) => (
   <Toolbar sx={{ justifyContent: 'space-between' }}>
     <SaveButton />
-    {mode === 'edit' && def.actions.includes('delete') && <DeleteWithConfirmButton confirmTitle={`Delete this ${def.singular.toLowerCase()}?`} />}
+    {mode === 'edit' && def.actions.includes('delete') && <DeleteButton def={def} />}
   </Toolbar>
 );
+
+function DeleteButton({ def }: { def: ResourceDef }) {
+  const record = useRecordContext<Rec>();
+  const back = parentPath(def, record) ?? 'list';
+  return <DeleteWithConfirmButton confirmTitle={`Delete this ${def.singular.toLowerCase()}?`} redirect={back} />;
+}
 
 function ReadOnlyRows({ def }: { def: ResourceDef }) {
   const fields = def.fields.filter((f) => f.expr && f.show !== false);
@@ -398,12 +448,24 @@ function ReadOnlyRows({ def }: { def: ResourceDef }) {
   );
 }
 
+/** The parent's page for a record of a resource with `returnTo`, or null. */
+function parentPath(def: ResourceDef, data?: Rec): string | null {
+  const to = def.returnTo;
+  if (!to || !data) return null;
+  if ('pathField' in to) return data[to.pathField] ? `/${data[to.pathField]}/show` : null;
+  return data[to.field] ? `/${to.resource}/${data[to.field]}/show` : null;
+}
+
+/** Where to go after saving: the parent's page when the resource has `returnTo`, else the record. */
+const afterSave = (def: ResourceDef) =>
+  def.returnTo ? (_resource?: string, id?: unknown, data?: Rec) => parentPath(def, data)?.slice(1) ?? `${def.key}/${id}/show` : ('show' as const);
+
 const defaults = (def: ResourceDef) =>
   Object.fromEntries(def.fields.filter((f) => f.defaultValue !== undefined).map((f) => [f.name, f.defaultValue]));
 
 export function makeCreate(def: ResourceDef) {
   const RecordCreate = () => (
-    <Create redirect="show" title={`Add ${def.singular}`}>
+    <Create redirect={afterSave(def)} title={`Add ${def.singular}`}>
       <SimpleForm toolbar={<FormToolbar def={def} mode="create" />} defaultValues={defaults(def)} sx={{ maxWidth: 720 }}>
         {def.fields.map((f) => fieldInput(f, 'create'))}
       </SimpleForm>
@@ -423,7 +485,7 @@ const transformEdit = (def: ResourceDef) => (data: Rec) => {
 
 export function makeEdit(def: ResourceDef) {
   const RecordEdit = () => (
-    <Edit redirect="show" mutationMode="pessimistic" title={<RecordTitle def={def} />} transform={transformEdit(def)}>
+    <Edit redirect={afterSave(def)} mutationMode="pessimistic" title={<RecordTitle def={def} />} transform={transformEdit(def)}>
       <SimpleForm toolbar={<FormToolbar def={def} mode="edit" />} sx={{ maxWidth: 720 }}>
         <ReadOnlyRows def={def} />
         {def.fields.map((f) => fieldInput(f, 'edit'))}

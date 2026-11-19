@@ -2,3 +2,4 @@
 import './leadership';
 import './leaderboard';
 import './subscription';
+import './contents';
