@@ -20,7 +20,7 @@ function menuEntries(): Map<string, Entry[]> {
   add('User Management', { resource: 'admin_users', priority: 2 });
   add('Contents', { route: '/contents', label: 'Contents tree', icon: <AccountTreeIcon />, permission: 'contents', priority: 0 });
   LEVEL_ORDER.forEach((key, i) => add('Contents', { resource: key, priority: i + 1 }));
-  for (const def of RESOURCES) add(def.group, { resource: def.key, priority: def.priority });
+  for (const def of RESOURCES) if (!def.hidden) add(def.group, { resource: def.key, priority: def.priority });
   for (const list of groups.values()) list.sort((a, b) => a.priority - b.priority);
   return groups;
 }

@@ -42,3 +42,20 @@ export const mapEnum = (map: Record<string, number | string>) => Object.entries(
 export function titleize(name: string): string {
   return name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
+
+/** draft / published / closed (campaigns, weekly challenges, TIP competitions). */
+export const STATUS_CHOICES = [
+  { id: 0, name: 'Draft' },
+  { id: 1, name: 'Published' },
+  { id: 2, name: 'Closed' },
+];
+
+/** Image rules shared by many Rails models: JPEG or PNG, at most 5 MB. */
+export const IMAGE_RULES = {
+  accept: ['image/jpeg', 'image/jpg', 'image/png'],
+  acceptMessage: 'must be a valid image format (jpeg, jpg, png)',
+  maxMb: 5,
+};
+
+/** Choices from Rails `*_LABELS` constants: label → stored value, labels kept as written. */
+export const labelEnum = (map: Record<string, number | string>) => Object.entries(map).map(([name, id]) => ({ id, name }));

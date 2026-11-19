@@ -13,6 +13,8 @@ export type FieldType =
   | 'date'
   | 'datetime'
   | 'reference'
+  /** Several references: an array column, or a join table (`through`). */
+  | 'references'
   | 'enum'
   | 'json'
   | 'duration'
@@ -38,8 +40,12 @@ export interface FieldDef {
   type: FieldType;
   /** For references: the panel resource it points at, its table and the column shown. */
   ref?: { resource?: string; table: string; labelColumn: string; labelExpr?: string };
+  /** For `references` kept in a join table: its name, the column pointing here and the one pointing at `ref`. */
+  through?: { table: string; ownColumn: string; otherColumn: string };
   /** For enums: stored value and label. */
   choices?: Choice[];
+  /** Enum stored as an array column (several values). */
+  multiple?: boolean;
   /** Shown in the list (default true for the first columns). */
   list?: boolean;
   /** Shown on the detail page (default true). */
@@ -62,9 +68,23 @@ export interface FieldDef {
   /** Files: Active Storage attachment name (defaults to the column-style name), accepted types, size. */
   attachment?: string;
   accept?: string[];
+  /** Message when the file type is not accepted (after the label). */
+  acceptMessage?: string;
   maxMb?: number;
   /** Default value for new records. */
   defaultValue?: unknown;
+  /** Only shown, required and saved while another field has one of these values. */
+  when?: { field: string; in: Array<string | number | boolean> };
+}
+
+/** Records of another resource listed on this one's detail page, with an "Add" button. */
+export interface ChildList {
+  resource: string;
+  /** Field on the child that points at this record. */
+  field: string;
+  label: string;
+  /** Child fields shown as columns. */
+  columns: string[];
 }
 
 export type MenuGroup =
@@ -123,6 +143,9 @@ export interface ResourceDef {
   singleton?: string;
   /** Short note shown above the list (for example what is still to migrate). */
   note?: string;
+  /** Not in the left menu (ActiveAdmin `menu false`): reached from links on other pages. */
+  hidden?: boolean;
+  children?: ChildList[];
 }
 
 /** Column name for a field. */

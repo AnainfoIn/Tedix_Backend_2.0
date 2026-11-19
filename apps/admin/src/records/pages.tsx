@@ -1,16 +1,19 @@
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
-import { Alert, Box, IconButton, Link as MuiLink, Tooltip } from '@mui/material';
+import { Alert, Box, Card, CardContent, Chip, IconButton, Link as MuiLink, Stack, Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography } from '@mui/material';
+import AddIcon from '@mui/icons-material/Add';
 import { ReactElement } from 'react';
 import {
-  AutocompleteInput, BooleanField, BooleanInput, Create, CreateButton, Datagrid, DateField, DateInput, DateTimeInput,
+  AutocompleteArrayInput, AutocompleteInput, BooleanField, FormDataConsumer, ReferenceArrayInput, SelectArrayInput,
+  useGetList, BooleanField as _B, BooleanInput, Create, CreateButton, Datagrid, DateField, DateInput, DateTimeInput,
   DeleteWithConfirmButton, Edit, EditButton, ExportButton, FileField, FileInput, FilterButton, FunctionField, ImageField,
   ImageInput, Labeled, List, NullableBooleanInput, NumberField, NumberInput, ReferenceInput, SaveButton, SearchInput,
   SelectField, SelectInput, Show, SimpleForm, SimpleShowLayout, TextField, TextInput, Toolbar, TopToolbar,
-  useCanAccess, useDataProvider, useNotify, useRecordContext, useRefresh, useResourceContext,
+  useCanAccess, useDataProvider, useNotify, useRecordContext, useRefresh, useResourceContext, Button, RecordContextProvider,
+  ResourceContextProvider,
 } from 'react-admin';
 import { Link } from 'react-router-dom';
-import { FieldDef, ResourceDef } from '../../../api/src/admin/records/defs/types';
+import { ChildList, FieldDef, ResourceDef } from '../../../api/src/admin/records/defs/types';
 import { RESOURCE_BY_KEY } from '../../../api/src/admin/records/defs';
 import { CONTENT_RESOURCES } from './registry';
 
@@ -47,6 +50,22 @@ function Html({ source }: { source: string }) {
   return <Box sx={{ '& p': { my: 0.5 }, maxWidth: 800 }} dangerouslySetInnerHTML={{ __html: safe }} />;
 }
 
+function Chips({ ids, labels, resource }: { ids?: unknown[]; labels?: string[]; resource?: string }) {
+  if (!ids?.length) return null;
+  return (
+    <Stack direction="row" flexWrap="wrap" gap={0.5}>
+      {ids.map((id, i) => {
+        const text = labels?.[i] ?? String(id);
+        return hasPage(resource) ? (
+          <Chip key={String(id)} size="small" label={text} component={Link} to={`/${resource}/${id}/show`} clickable onClick={(e: React.MouseEvent) => e.stopPropagation()} />
+        ) : (
+          <Chip key={String(id)} size="small" label={text} />
+        );
+      })}
+    </Stack>
+  );
+}
+
 /** Read-only display of one field (list column or show row). */
 export function fieldDisplay(f: FieldDef, inList = false): ReactElement {
   const label = labelOf(f);
@@ -62,9 +81,14 @@ export function fieldDisplay(f: FieldDef, inList = false): ReactElement {
     case 'datetime':
       return <DateField key={f.name} source={f.name} label={label} showTime sortable={sortable} />;
     case 'enum':
+      if (f.multiple) {
+        return <FunctionField key={f.name} label={label} sortable={false} render={(r: Rec) => <Chips ids={r[f.name]} labels={(r[f.name] ?? []).map((v: unknown) => f.choices?.find((c) => String(c.id) === String(v))?.name ?? String(v))} />} />;
+      }
       return <SelectField key={f.name} source={f.name} label={label} choices={f.choices ?? []} sortable={sortable} />;
     case 'reference':
       return <FunctionField key={f.name} label={label} sortBy={f.name} render={() => <ReferenceLink field={f} />} />;
+    case 'references':
+      return <FunctionField key={f.name} label={label} sortable={false} render={(r: Rec) => <Chips ids={r[f.name]} labels={r[`${f.name}Labels`]} resource={f.ref?.resource} />} />;
     case 'duration':
       return <TextField key={f.name} source={`${f.name}Text`} label={label} sortBy={f.name} />;
     case 'image':
@@ -106,8 +130,19 @@ function referenceInput(f: FieldDef, extra: Rec = {}) {
 
 const camel = (s: string) => s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 
-/** Form input for one field. */
+/** Form input for one field; a `when` field only shows while its condition holds. */
 export function fieldInput(f: FieldDef, mode: 'create' | 'edit'): ReactElement | null {
+  const input = rawInput(f, mode);
+  if (!input || !f.when) return input;
+  const cond = f.when;
+  return (
+    <FormDataConsumer key={f.name}>
+      {({ formData }) => (cond.in.some((v) => String(v) === String(formData?.[cond.field])) ? input : null)}
+    </FormDataConsumer>
+  );
+}
+
+function rawInput(f: FieldDef, mode: 'create' | 'edit'): ReactElement | null {
   if (f.expr || f.form === false || (f.form === 'create' && mode === 'edit')) return null;
   const disabled = f.form === 'readonly';
   if (disabled && mode === 'create') return null;
@@ -124,7 +159,16 @@ export function fieldInput(f: FieldDef, mode: 'create' | 'edit'): ReactElement |
     case 'datetime':
       return <DateTimeInput {...common} />;
     case 'enum':
+      if (f.multiple) return <SelectArrayInput {...common} choices={f.choices ?? []} />;
       return <SelectInput {...common} choices={f.choices ?? []} emptyText="" />;
+    case 'references': {
+      const optionText = f.ref!.labelColumn === 'course_name' ? 'name' : camel(f.ref!.labelColumn);
+      return (
+        <ReferenceArrayInput key={f.name} source={f.name} reference={f.ref!.resource!} perPage={100} sort={{ field: optionText, order: 'ASC' }}>
+          <AutocompleteArrayInput label={labelOf(f)} optionText={optionText} filterToQuery={(q: string) => ({ q })} helperText={f.hint} disabled={disabled} />
+        </ReferenceArrayInput>
+      );
+    }
     case 'reference':
       if (!hasPage(f.ref?.resource)) return <NumberInput {...common} label={`${labelOf(f)} (ID)`} />;
       return disabled ? <TextInput {...common} source={`${f.name}Label`} /> : referenceInput(f);
@@ -262,9 +306,70 @@ export function makeShow(def: ResourceDef) {
         {def.fields.filter((f) => f.show !== false).map((f) => fieldDisplay(f))}
         {def.position && <TextField source="position" />}
       </SimpleShowLayout>
+      {(def.children ?? []).map((c) => <ChildPanel key={c.resource} child={c} />)}
     </Show>
   );
   return RecordShow;
+}
+
+/** Records of another resource that belong to this one (e.g. a shield's shadow categories), with an Add button. */
+function ChildPanel({ child }: { child: ChildList }) {
+  const record = useRecordContext<Rec>();
+  const def = RESOURCE_BY_KEY[child.resource];
+  const { canAccess: canAdd } = useCanAccess({ resource: child.resource, action: 'create' });
+  const { data, isPending } = useGetList(
+    child.resource,
+    { filter: { [child.field]: record?.id }, pagination: { page: 1, perPage: 200 }, sort: def?.position ? { field: 'position', order: 'ASC' } : { field: 'id', order: 'ASC' } },
+    { enabled: !!record && !!def },
+  );
+  if (!record || !def) return null;
+  const columns = child.columns.map((name) => def.fields.find((f) => f.name === name)).filter((f): f is FieldDef => !!f);
+  return (
+    <Card sx={{ mt: 2 }}>
+      <CardContent>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+          <Typography variant="h6">{child.label}</Typography>
+          {canAdd && def.actions.includes('create') && (
+            <Button component={Link} to={`/${child.resource}/create?source=${encodeURIComponent(JSON.stringify({ [child.field]: record.id }))}`} startIcon={<AddIcon />} variant="outlined" size="small">
+              Add {def.singular}
+            </Button>
+          )}
+        </Stack>
+        {isPending ? null : !data?.length ? (
+          <Typography variant="body2" color="text.secondary">No {child.label.toLowerCase()} added yet.</Typography>
+        ) : (
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                {columns.map((f) => <TableCell key={f.name}>{labelOf(f)}</TableCell>)}
+                <TableCell />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {data.map((row) => (
+                <TableRow key={row.id} hover>
+                  {columns.map((f) => (
+                    <TableCell key={f.name}>
+                      <RecordContextProvider value={row}>{fieldDisplay(f, true)}</RecordContextProvider>
+                    </TableCell>
+                  ))}
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                    <RecordContextProvider value={row}>
+                      <ResourceContextProvider value={child.resource}>
+                        {def.position && <MoveButtons def={def} />}
+                      </ResourceContextProvider>
+                    </RecordContextProvider>
+                    <Button component={Link} to={`/${child.resource}/${row.id}/show`} size="small">View</Button>
+                    {def.actions.includes('edit') && <Button component={Link} to={`/${child.resource}/${row.id}`} size="small">Edit</Button>}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function RecordTitle({ def }: { def: ResourceDef }) {

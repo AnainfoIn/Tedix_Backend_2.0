@@ -4,8 +4,9 @@ import { StorageService, UploadedFile } from '../../storage/storage.service';
 import { baseError, FieldErrors, throwIfErrors } from '../../common/validation-error';
 import { columnOf, FieldDef, ResourceDef } from './defs/types';
 import { HOOKS, HookContext } from './hooks';
+import './rules';
 
-type Row = Record<string, unknown>;
+type Row = Record<string, any>;
 export type Files = Record<string, UploadedFile[] | undefined>;
 
 export interface RecordListQuery {
@@ -18,13 +19,19 @@ export interface RecordListQuery {
 }
 
 const FILE_TYPES = new Set(['image', 'file']);
+/** Join-table values that validate() hands to create/update (not columns of the table). */
+const THROUGH = Symbol('through');
 const isFile = (f: FieldDef) => FILE_TYPES.has(f.type);
-const isStored = (f: FieldDef) => !f.expr && !isFile(f);
+const isStored = (f: FieldDef) => !f.expr && !isFile(f) && !f.through;
 const quote = (identifier: string) => `"${identifier.replace(/"/g, '""')}"`;
 const attachmentName = (f: FieldDef) => f.attachment ?? columnOf(f);
 
 /** SQL for a field as seen in SELECT / WHERE / ORDER BY. */
 function sqlOf(field: FieldDef): string {
+  if (field.through) {
+    const j = field.through;
+    return `(SELECT COALESCE(array_agg(j.${quote(j.otherColumn)} ORDER BY j.${quote(j.otherColumn)}), '{}') FROM ${quote(j.table)} j WHERE j.${quote(j.ownColumn)} = t.id)`;
+  }
   return field.expr ? `(${field.expr})` : `t.${quote(columnOf(field))}`;
 }
 
@@ -66,19 +73,19 @@ export class RecordsService {
   /** Fields whose column is really in the database (a column missing there is skipped, not fatal). */
   private async liveFields(def: ResourceDef): Promise<FieldDef[]> {
     const cols = await this.tableColumns(def.table);
-    return def.fields.filter((f) => f.expr || isFile(f) || cols.has(columnOf(f)));
+    return def.fields.filter((f) => f.expr || isFile(f) || f.through || cols.has(columnOf(f)));
   }
 
   async list(def: ResourceDef, query: RecordListQuery) {
     const fields = await this.liveFields(def);
     const params: unknown[] = [];
     const where = this.whereClause(def, fields, query, params);
-    const sortField = fields.find((f) => f.name === query.sortField && !isFile(f));
-    const order = sortField ? `${sqlOf(sortField)} ${query.sortOrder === 'desc' ? 'DESC' : 'ASC'} NULLS LAST, t.id ${query.sortOrder === 'desc' ? 'DESC' : 'ASC'}` : 't.id ASC';
+    const sortField = query.sortField === 'position' && def.position ? ({ name: 'position', type: 'integer' } as FieldDef) : fields.find((f) => f.name === query.sortField && !isFile(f));
+    const order = sortField ? `${sortField.name === 'position' && !fields.includes(sortField) ? 't.position' : sqlOf(sortField)} ${query.sortOrder === 'desc' ? 'DESC' : 'ASC'} NULLS LAST, t.id ${query.sortOrder === 'desc' ? 'DESC' : 'ASC'}` : 't.id ASC';
     const from = `FROM ${quote(def.table)} t ${def.joins ?? ''}`;
     const [{ count }] = await this.prisma.$queryRawUnsafe<{ count: bigint }[]>(`SELECT COUNT(*)::bigint AS count ${from} ${where}`, ...params);
     const rows = await this.prisma.$queryRawUnsafe<Row[]>(
-      `SELECT ${this.selectList(fields)} ${from} ${where} ORDER BY ${order} LIMIT ${query.take} OFFSET ${query.skip}`,
+      `SELECT ${this.selectList(fields, !!def.position)} ${from} ${where} ORDER BY ${order} LIMIT ${query.take} OFFSET ${query.skip}`,
       ...params,
     );
     return { data: await this.present(def, fields, rows), total: Number(count) };
@@ -88,7 +95,7 @@ export class RecordsService {
     if (!ids.length) return { data: [], total: 0 };
     const fields = await this.liveFields(def);
     const rows = await this.prisma.$queryRawUnsafe<Row[]>(
-      `SELECT ${this.selectList(fields)} FROM ${quote(def.table)} t ${def.joins ?? ''} WHERE t.id = ANY($1::bigint[]) ORDER BY t.id`,
+      `SELECT ${this.selectList(fields, !!def.position)} FROM ${quote(def.table)} t ${def.joins ?? ''} WHERE t.id = ANY($1::bigint[]) ORDER BY t.id`,
       ids,
     );
     const data = await this.present(def, fields, rows);
@@ -129,6 +136,7 @@ export class RecordsService {
       `INSERT INTO ${quote(def.table)} (${keys.map(quote).join(', ')}) VALUES (${keys.map((k, i) => `$${i + 1}::${quote(cols.get(k)!)}`).join(', ')}) RETURNING id`,
       ...keys.map((k) => data[k]),
     );
+    await this.saveThrough(fields, id, data);
     await this.saveFiles(def, fields, id, input, files);
     await HOOKS[def.key]?.afterSave?.(this.context(), id, data, null);
     return this.get(def, id);
@@ -137,6 +145,11 @@ export class RecordsService {
   async update(def: ResourceDef, id: bigint, input: Row, files: Files) {
     const fields = await this.liveFields(def);
     const current = await this.findRow(def, fields, id);
+    if (def.railsClass && fields.some(isFile)) {
+      const names = fields.filter(isFile).map(attachmentName);
+      const attached = await this.storage.filesFor(def.railsClass, id, names).catch(() => ({}) as Record<string, unknown>);
+      current.__files = Object.fromEntries(fields.filter(isFile).map((f) => [f.name, !!(attached as Record<string, unknown>)[attachmentName(f)]]));
+    }
     const data = await this.validate(def, fields, input, files, current);
     const cols = await this.tableColumns(def.table);
     if (cols.has('updated_at')) data.updated_at = new Date();
@@ -148,6 +161,7 @@ export class RecordsService {
         ...keys.map((k) => data[k]),
       );
     }
+    await this.saveThrough(fields, id, data);
     await this.saveFiles(def, fields, id, input, files);
     await HOOKS[def.key]?.afterSave?.(this.context(), id, data, current);
     return this.get(def, id);
@@ -222,16 +236,17 @@ export class RecordsService {
     return { prisma: this.prisma };
   }
 
-  private selectList(fields: FieldDef[]): string {
+  private selectList(fields: FieldDef[], positioned = false): string {
     const parts = ['t.id AS "id"'];
     for (const f of fields) if (!isFile(f) && f.name !== 'id') parts.push(`${sqlOf(f)} AS ${quote(f.name)}`);
+    if (positioned) parts.push('t.position AS "position"');
     return parts.join(', ');
   }
 
   private async findRow(def: ResourceDef, fields: FieldDef[], id: bigint): Promise<Row> {
     const extra = def.position?.scope ? `, t.${quote(def.position.scope)} AS ${quote(`__${def.position.scope}`)}` : '';
     const rows = await this.prisma.$queryRawUnsafe<Row[]>(
-      `SELECT ${this.selectList(fields)}${extra} FROM ${quote(def.table)} t ${def.joins ?? ''} WHERE t.id = $1`,
+      `SELECT ${this.selectList(fields, !!def.position)}${extra} FROM ${quote(def.table)} t ${def.joins ?? ''} WHERE t.id = $1`,
       id,
     );
     if (!rows.length) throw new NotFoundException(`${def.singular} not found`);
@@ -321,6 +336,22 @@ export class RecordsService {
       const map = new Map(labels.map((l) => [Number(l.id), l.label]));
       for (const r of out) if (r[f.name] != null) r[`${f.name}Label`] = map.get(Number(r[f.name])) ?? null;
     }
+    for (const f of fields.filter((x) => x.type === 'references')) {
+      for (const r of out) if (Array.isArray(r[f.name])) r[f.name] = r[f.name].map(Number);
+    }
+    for (const f of fields.filter((x) => x.type === 'references' && x.ref)) {
+      const ids = [...new Set(out.flatMap((r) => (Array.isArray(r[f.name]) ? r[f.name] : [])))];
+      if (!ids.length) continue;
+      const labelSql = f.ref!.labelExpr ?? quote(f.ref!.labelColumn);
+      const labels = await this.prisma
+        .$queryRawUnsafe<{ id: bigint; label: unknown }[]>(
+          `SELECT id, (${labelSql})::text AS label FROM ${quote(f.ref!.table)} WHERE id = ANY($1::bigint[])`,
+          ids.map((v) => BigInt(v as number)),
+        )
+        .catch(() => []);
+      const map = new Map(labels.map((l) => [Number(l.id), l.label]));
+      for (const r of out) if (Array.isArray(r[f.name])) r[`${f.name}Labels`] = r[f.name].map((v: number) => map.get(Number(v)) ?? `#${v}`);
+    }
     const fileFields = fields.filter(isFile);
     if (withFiles && fileFields.length && def.railsClass && out.length) {
       const names = fileFields.map(attachmentName);
@@ -340,9 +371,10 @@ export class RecordsService {
     const add = (field: string, message: string) => (errors[field] ??= []).push(message);
     const data: Row = {};
     const values: Row = {};
+    const through: Record<string, bigint[]> = {};
 
     for (const f of fields) {
-      if (!isStored(f)) continue;
+      if (f.expr || isFile(f)) continue;
       const editable = f.form === undefined || f.form === true || (f.form === 'create' && current === null);
       const label = f.label ?? humanize(f.name);
       let value: unknown;
@@ -354,16 +386,19 @@ export class RecordsService {
           continue;
         }
         value = parsed.value;
-        data[columnOf(f)] = value;
+        if (f.through) through[f.name] = value as bigint[];
+        else data[columnOf(f)] = value;
       } else if (current) {
         value = current[f.name];
       } else continue;
       values[f.name] = value;
 
-      if (!editable) continue;
-      const blank = value === null || value === undefined || value === '';
+      if (!editable || !this.applies(f, input, current)) continue;
+      const blank = value === null || value === undefined || value === '' || (Array.isArray(value) && !value.length);
       if (f.required && blank) {
-        add(f.name, f.type === 'reference' ? `${label} must exist` : `${label} can't be blank`);
+        // The Rails models word presence errors by type: references and enums "must exist", dates "must be set".
+        const word = ['reference', 'references', 'enum'].includes(f.type) ? 'must exist' : ['date', 'datetime'].includes(f.type) ? 'must be set' : "can't be blank";
+        add(f.name, `${label} ${word}`);
         continue;
       }
       if (blank) continue;
@@ -376,10 +411,17 @@ export class RecordsService {
         if (f.min !== undefined && value < f.min) add(f.name, `${label} must be greater than or equal to ${f.min}`);
         if (f.max !== undefined && value > f.max) add(f.name, `${label} must be less than or equal to ${f.max}`);
       }
-      if (f.type === 'enum' && f.choices && !f.choices.some((c) => String(c.id) === String(value))) add(f.name, `${label} is not included in the list`);
+      if (f.type === 'enum' && !f.multiple && f.choices && !f.choices.some((c) => String(c.id) === String(value))) add(f.name, `${label} is not included in the list`);
       if (f.type === 'reference' && f.ref) {
         const rows = await this.prisma.$queryRawUnsafe<unknown[]>(`SELECT 1 FROM ${quote(f.ref.table)} WHERE id = $1`, value);
         if (!rows.length) add(f.name, `${label} must exist`);
+      }
+      if (f.type === 'references' && f.ref && Array.isArray(value) && value.length) {
+        const [{ count }] = await this.prisma.$queryRawUnsafe<{ count: bigint }[]>(
+          `SELECT COUNT(*)::bigint AS count FROM ${quote(f.ref.table)} WHERE id = ANY($1::bigint[])`,
+          value,
+        );
+        if (Number(count) !== value.length) add(f.name, `${label} must exist`);
       }
     }
 
@@ -407,15 +449,45 @@ export class RecordsService {
 
     for (const f of fields.filter(isFile)) {
       const file = files[f.name]?.[0];
-      if (!file) continue;
       const label = f.label ?? humanize(f.name);
-      if (f.accept && !f.accept.includes(file.mimetype)) add(f.name, `${label} must be a ${f.accept.map((t) => t.split('/')[1].toUpperCase()).join(', ')} file`);
+      if (!file) {
+        const removing = truthy(input[`remove${f.name[0].toUpperCase()}${f.name.slice(1)}`]);
+        if (f.required && this.applies(f, input, current) && (current === null || removing || !current.__files?.[f.name])) add(f.name, `${label} must be attached`);
+        continue;
+      }
+      if (f.accept && !f.accept.includes(file.mimetype)) add(f.name, `${label} ${f.acceptMessage ?? `must be a ${f.accept.map((t) => t.split('/')[1].toUpperCase()).join(', ')} file`}`);
       else if (f.maxMb && file.size > f.maxMb * 1024 * 1024) add(f.name, `${label} size must be less than ${f.maxMb}MB`);
     }
 
     await HOOKS[def.key]?.validate?.(this.context(), { data, values, input, files, current, add });
     throwIfErrors(errors);
+    Object.defineProperty(data, THROUGH, { value: through, enumerable: false });
     return data;
+  }
+
+  /** A `when` field only counts while its condition field has one of the listed values. */
+  private applies(f: FieldDef, input: Row, current: Row | null): boolean {
+    if (!f.when) return true;
+    const value = f.when.field in input ? input[f.when.field] : current?.[f.when.field];
+    return f.when.in.some((v) => String(v) === String(value));
+  }
+
+  /** Replaces the join-table rows of `references` fields that were sent. */
+  private async saveThrough(fields: FieldDef[], id: bigint, data: Row) {
+    const values: Record<string, bigint[]> = (data as any)[THROUGH] ?? {};
+    for (const f of fields.filter((x) => x.through && x.name in values)) {
+      const j = f.through!;
+      const cols = await this.tableColumns(j.table);
+      await this.prisma.$queryRawUnsafe(`DELETE FROM ${quote(j.table)} WHERE ${quote(j.ownColumn)} = $1`, id);
+      const stamps = ['created_at', 'updated_at'].filter((c) => cols.has(c));
+      for (const other of values[f.name] ?? []) {
+        await this.prisma.$queryRawUnsafe(
+          `INSERT INTO ${quote(j.table)} (${[j.ownColumn, j.otherColumn, ...stamps].map(quote).join(', ')}) VALUES ($1, $2${stamps.map(() => ', now()').join('')})`,
+          id,
+          other,
+        );
+      }
+    }
   }
 
   private async saveFiles(def: ResourceDef, fields: FieldDef[], id: bigint, input: Row, files: Files) {
@@ -430,6 +502,7 @@ export class RecordsService {
 }
 
 function plain(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(plain);
   if (typeof value === 'bigint') return Number(value);
   if (value instanceof Date) return value.toISOString();
   if (value && typeof value === 'object' && 'toNumber' in value && typeof (value as { toNumber: unknown }).toNumber === 'function') {
@@ -493,7 +566,18 @@ function parseValue(f: FieldDef, raw: unknown): { value?: unknown; error?: strin
       if (!/^-?\d+$/.test(s)) return { error: 'is not a number' };
       return { value: f.type === 'reference' ? BigInt(s) : Number(s) };
     }
+    case 'references': {
+      const list = Array.isArray(raw) ? raw : String(raw).split(',');
+      const ids = list.map((v) => String(v).trim()).filter(Boolean);
+      if (ids.some((v) => !/^\d+$/.test(v))) return { error: 'must be a list of ids' };
+      return { value: [...new Set(ids)].map((v) => BigInt(v)) };
+    }
     case 'enum': {
+      if (f.multiple) {
+        const list = (Array.isArray(raw) ? raw : String(raw).split(',')).map((v) => String(v).trim()).filter(Boolean);
+        const bad = list.find((v) => !f.choices?.some((c) => String(c.id) === v));
+        return bad ? { error: 'is not included in the list' } : { value: [...new Set(list)] };
+      }
       const choice = f.choices?.find((c) => String(c.id) === String(raw));
       return { value: choice ? choice.id : String(raw) };
     }
