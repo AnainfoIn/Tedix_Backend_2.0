@@ -85,7 +85,7 @@ describeDb('admin API (e2e)', () => {
 
   it('reports database status without data', async () => {
     const res = await request(app.getHttpServer()).get('/healthcheck/db').expect(200);
-    expect(res.body).toEqual({ database: 'ok', tables: 3, adminTablesPresent: true });
+    expect(res.body).toMatchObject({ database: 'ok', adminTablesPresent: true });
   });
 
   it('signs in with a password hashed by Rails/Devise', async () => {

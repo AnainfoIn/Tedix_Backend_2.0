@@ -6,13 +6,15 @@ import { AdminAuthGuard } from './auth/admin-auth.guard';
 import { AdminAuthService } from './auth/admin-auth.service';
 import { AdminTokenService } from './auth/admin-token.service';
 import { LoginRateLimiter } from './auth/login-rate-limiter';
+import { CONTENT_CONTROLLERS } from './contents/contents.controller';
+import { ContentsService } from './contents/contents.service';
 import { DashboardController } from './dashboard/dashboard.controller';
 import { RolesController } from './roles/roles.controller';
 import { RolesService } from './roles/roles.service';
 
 /** Admin panel API (replaces ActiveAdmin). Each migrated module adds its admin controllers here. */
 @Module({
-  controllers: [AdminAuthController, DashboardController, RolesController, AdminUsersController],
-  providers: [AdminTokenService, AdminAuthGuard, AdminAuthService, LoginRateLimiter, RolesService, AdminUsersService],
+  controllers: [AdminAuthController, DashboardController, RolesController, AdminUsersController, ...CONTENT_CONTROLLERS],
+  providers: [AdminTokenService, AdminAuthGuard, AdminAuthService, LoginRateLimiter, RolesService, AdminUsersService, ContentsService],
 })
 export class AdminModule {}

@@ -25,6 +25,7 @@ export const SUB_ADMIN_READ = new Set([
   'categories',
   'sub_categories',
   'question_banks',
+  'contents',
 ]);
 
 /** Pages every signed-in admin can open. */

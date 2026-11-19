@@ -19,18 +19,18 @@ datasource db {
 
 /// Admin panel users (Devise in Rails, table `admin_users`).
 model AdminUser {
-  id                   BigInt    @id @default(autoincrement())
-  email                String    @unique(map: "index_admin_users_on_email") @db.VarChar
-  encryptedPassword    String    @map("encrypted_password") @db.VarChar
-  resetPasswordToken   String?   @unique(map: "index_admin_users_on_reset_password_token") @map("reset_password_token") @db.VarChar
-  resetPasswordSentAt  DateTime? @map("reset_password_sent_at") @db.Timestamp(6)
-  rememberCreatedAt    DateTime? @map("remember_created_at") @db.Timestamp(6)
-  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
-  roleId               BigInt    @map("role_id")
-  googleSecret         String?   @map("google_secret") @db.VarChar
-  twoFactorEnabled     Boolean?  @default(false) @map("two_factor_enabled")
-  mfaSecret            String?   @map("mfa_secret") @db.VarChar
+  id                  BigInt    @id @default(autoincrement())
+  email               String    @unique(map: "index_admin_users_on_email") @db.VarChar
+  encryptedPassword   String    @map("encrypted_password") @db.VarChar
+  resetPasswordToken  String?   @unique(map: "index_admin_users_on_reset_password_token") @map("reset_password_token") @db.VarChar
+  resetPasswordSentAt DateTime? @map("reset_password_sent_at") @db.Timestamp(6)
+  rememberCreatedAt   DateTime? @map("remember_created_at") @db.Timestamp(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+  roleId              BigInt    @map("role_id")
+  googleSecret        String?   @map("google_secret") @db.VarChar
+  twoFactorEnabled    Boolean?  @default(false) @map("two_factor_enabled")
+  mfaSecret           String?   @map("mfa_secret") @db.VarChar
 
   role Role @relation(fields: [roleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -46,4 +46,151 @@ model Role {
   adminUsers AdminUser[]
 
   @@map("roles")
+}
+
+// ---------------------------------------------------------------------------
+// Contents (learning tree). Columns as the Rails migrations leave them (db/schema.rb is
+// older than the migrations, so it is not the reference). Every level below Country stores
+// all of its ancestors' ids. No relations are declared: the admin service fills and checks
+// the ids itself, the same way the Rails models do.
+// ---------------------------------------------------------------------------
+
+/// AccountBlock::Country
+model Country {
+  id          BigInt   @id @default(autoincrement())
+  name        String   @db.VarChar
+  alpha2      String   @db.VarChar
+  alpha3      String   @db.VarChar
+  countryCode String   @map("country_code") @db.VarChar
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("account_block_countries")
+}
+
+/// BxBlockCategories::Category, shown as "Grade"
+model Grade {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @db.VarChar
+  countryId BigInt   @map("country_id")
+  position  Int?     @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("categories")
+}
+
+/// BxBlockCategories::SubCategory, shown as "Subject"
+model Subject {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @db.VarChar
+  countryId BigInt   @map("country_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("sub_categories")
+}
+
+/// Join table between grades and subjects (has_and_belongs_to_many in Rails)
+model GradeSubject {
+  id        BigInt @id @default(autoincrement())
+  gradeId   BigInt @map("category_id")
+  subjectId BigInt @map("sub_category_id")
+
+  @@map("categories_sub_categories")
+}
+
+/// BxBlockProfile::Course, shown as "Master"
+model Master {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @map("course_name") @db.VarChar
+  countryId BigInt   @map("country_id")
+  gradeId   BigInt   @map("category_id")
+  subjectId BigInt   @map("sub_category_id")
+  position  Int?     @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("bx_block_profile_courses")
+}
+
+/// BxBlockProfile::Main
+model Main {
+  id        BigInt   @id @default(autoincrement())
+  name      String   @db.VarChar
+  countryId BigInt   @map("country_id")
+  gradeId   BigInt   @map("category_id")
+  subjectId BigInt   @map("sub_category_id")
+  masterId  BigInt   @map("course_id")
+  position  Int?     @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("bx_block_profile_mains")
+}
+
+/// BxBlockProfile::Unit
+model Unit {
+  id         BigInt   @id @default(autoincrement())
+  name       String   @db.VarChar
+  countryId  BigInt   @map("country_id")
+  gradeId    BigInt   @map("category_id")
+  subjectId  BigInt   @map("sub_category_id")
+  masterId   BigInt   @map("course_id")
+  mainId     BigInt   @map("main_id")
+  unitNumber Int?     @map("unit_number")
+  position   Int?     @default(0)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("bx_block_profile_units")
+}
+
+/// BxBlockProfile::Lesson
+model Lesson {
+  id           BigInt   @id @default(autoincrement())
+  name         String   @db.VarChar
+  countryId    BigInt   @map("country_id")
+  gradeId      BigInt   @map("category_id")
+  subjectId    BigInt   @map("sub_category_id")
+  masterId     BigInt   @map("course_id")
+  mainId       BigInt   @map("main_id")
+  unitId       BigInt   @map("unit_id")
+  lessonNumber Int?     @map("lesson_number")
+  position     Int?     @default(0)
+  startDate    DateTime @map("start_date") @db.Date
+  endDate      DateTime @map("end_date") @db.Date
+  isUpgraded   Boolean? @default(false) @map("is_upgraded")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("bx_block_profile_lessons")
+}
+
+/// Active Storage file record (shared with Rails, same bucket)
+model StorageBlob {
+  id          BigInt   @id @default(autoincrement())
+  key         String   @unique(map: "index_active_storage_blobs_on_key") @db.VarChar
+  filename    String   @db.VarChar
+  contentType String?  @map("content_type") @db.VarChar
+  metadata    String?
+  byteSize    BigInt   @map("byte_size")
+  checksum    String   @db.VarChar
+  serviceName String   @map("service_name") @db.VarChar
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("active_storage_blobs")
+}
+
+/// Active Storage link between a record and a file
+model StorageAttachment {
+  id           BigInt   @id @default(autoincrement())
+  name         String   @db.VarChar
+  recordType   String   @map("record_type") @db.VarChar
+  recordId     BigInt   @map("record_id")
+  blobId       BigInt   @map("blob_id")
+  defaultImage Boolean? @default(false) @map("default_image")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("active_storage_attachments")
 }
