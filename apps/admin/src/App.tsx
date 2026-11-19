@@ -4,6 +4,8 @@ import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import PublicIcon from '@mui/icons-material/Public';
 import { Route } from 'react-router-dom';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import { NotificationCreate, NotificationEdit, NotificationList, NotificationShow } from './resources/notifications';
 import { Admin, CustomRoutes, Layout, LayoutProps, Resource } from 'react-admin';
 import { authProvider } from './authProvider';
 import { ContentsTree } from './contents/ContentsTree';
@@ -66,6 +68,14 @@ export function App() {
         show={RoleShow}
         edit={RoleEdit}
         recordRepresentation="name"
+      />
+      <Resource
+        name="notifications"
+        icon={NotificationsIcon}
+        list={NotificationList}
+        show={NotificationShow}
+        create={NotificationCreate}
+        edit={NotificationEdit}
       />
       {RESOURCES.map((def) => (
         <Resource

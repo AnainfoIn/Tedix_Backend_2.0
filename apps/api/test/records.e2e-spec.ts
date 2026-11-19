@@ -353,6 +353,47 @@ describeDb('generic admin resources (e2e)', () => {
     expect((await api('sub').post('/exercises', { name: 'x' })).status).toBe(403);
   });
 
+  it('creates notifications with their channels, schedule and targeting', async () => {
+    const empty = await api().post('/notifications', {});
+    expect(empty.body.errors).toEqual({ base: ['At least one notification type must be selected'], targetCountry: ["Targeting settings can't be blank"] });
+    const missing = await api().post('/notifications', { inapp: true, sms: true, smsSponsorMessage: true, targetCountry: ['Romania'] });
+    expect(missing.body.errors).toMatchObject({
+      inappSubject: ["Admin inapp notification subject can't be blank"],
+      smsName: ["Admin sms notification name can't be blank"],
+      smsSponsorBody: ["Admin sms notification sponsor body can't be blank"],
+    });
+    const created = await api().post('/notifications', {
+      inapp: true, inappSubject: 'Hello', inappContent: 'Line 1\nLine <2>', inappIsButton: true,
+      push: true, pushSubject: 'Ping', pushContent: 'Open the app',
+      scheduleType: 'weekly', scheduleTime: '2026-12-01T09:30:00Z', recurrenceWeekday: [1, 3],
+      targetCountry: ['Romania'], targetCity: ['Nowhere'], targetAccountType: ['student'],
+    });
+    expect(created.status).toBe(201);
+    const n = created.body.data;
+    expect(n).toMatchObject({
+      types: 'In-App, Push', status: 'draft', scheduleText: 'Weekly on Monday, Wednesday at 09:30', recurrenceWeekday: [1, 3],
+      targetingSummary: 'Countries: Romania | Cities: Nowhere | Account Types: student',
+      inappSubject: 'Hello', inappContent: 'Line 1\nLine <2>', inappIsButton: true, pushSubject: 'Ping', pushContent: 'Open the app',
+    });
+    expect(n.targetedAccountsCount).toBeGreaterThanOrEqual(0);
+    const [{ body }] = await prisma.$queryRawUnsafe<{ body: string }[]>(`SELECT body FROM action_text_rich_texts WHERE record_type = 'BxBlockNotifications::AdminInappNotification'`);
+    expect(body).toBe('<div>Line 1<br>Line &lt;2&gt;</div>');
+
+    const [{ id: kid }] = await prisma.$queryRawUnsafe<{ id: bigint }[]>(`SELECT account_id AS id FROM bx_block_profile_profiles WHERE user_name = 'kiddo'`);
+    await prisma.$executeRawUnsafe(`UPDATE bx_block_profile_profiles SET city = 'Iasi', school = 'School 1', grade = '5' WHERE account_id = ${kid}`);
+    const options = await api().get('/notifications/targeting-options?type=cities&country=Romania');
+    expect(options.body.data).toEqual(['Iasi']);
+    const updated = await api().put(`/notifications/${n.id}`, { push: false, targetCity: ['Iasi'], accountIds: [Number(kid)] });
+    expect(updated.body.data).toMatchObject({ types: 'In-App', targetedAccountsCount: 1, manualAccountsCount: 1, totalAccountsCount: 1, inappSubject: 'Hello' });
+    expect(updated.body.data.pushSubject).toBeUndefined();
+    expect(await prisma.$queryRawUnsafe('SELECT id FROM admin_push_notifications')).toEqual([]);
+    expect((await api().get('/notifications?inapp=true')).body.total).toBe(1);
+    expect((await api('viewer').get(`/notifications/${n.id}`)).status).toBe(200);
+    expect((await api('viewer').del(`/notifications/${n.id}`)).status).toBe(403);
+    expect((await api().del(`/notifications/${n.id}`)).status).toBe(200);
+    expect(await prisma.$queryRawUnsafe('SELECT id FROM action_text_rich_texts')).toEqual([]);
+  });
+
   it('applies the CanCan roles', async () => {
     expect((await api('viewer').get('/cities')).status).toBe(200);
     expect((await api('viewer').post('/cities', { name: 'Iasi', countryId })).status).toBe(403);
