@@ -50,8 +50,8 @@ export interface FieldDef {
   list?: boolean;
   /** Shown on the detail page (default true). */
   show?: boolean;
-  /** In the form: true (editable), 'readonly' (shown but disabled), 'create' (only on create), false. */
-  form?: boolean | 'readonly' | 'create';
+  /** In the form: true (editable), 'readonly' (shown but disabled), 'create' (editable on create, disabled after), 'edit' (only on edit), false. */
+  form?: boolean | 'readonly' | 'create' | 'edit';
   /** Offered as a list filter. */
   filter?: boolean;
   sortable?: boolean;

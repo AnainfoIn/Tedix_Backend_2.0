@@ -273,6 +273,34 @@ describeDb('generic admin resources (e2e)', () => {
     expect((await api('viewer').put(`/monthly_reward_claims/${monthly.id}`, { status: 1 })).status).toBe(403);
   });
 
+  it('creates subscription plans with Stripe references and lists user subscriptions', async () => {
+    const bad = await api().post('/subscription_plans', { name: ' x ', interval: 0, intervalCount: 0, priceCents: -1 });
+    expect(bad.body.errors).toMatchObject({
+      name: ['Name is too short (minimum is 2 characters)'],
+      intervalCount: ['Interval count must be greater than 0'],
+      priceCents: ['Price (€) must be greater than or equal to 0'],
+      description: ["Description can't be blank"],
+    });
+    const plan = await api().post('/subscription_plans', { name: 'Premium  Monthly', interval: 0, intervalCount: 1, priceCents: 5, description: 'All lessons' });
+    expect(plan.status).toBe(201);
+    expect(plan.body.data).toMatchObject({ name: 'Premium Monthly', active: true });
+    expect(plan.body.data.stripePriceId).toMatch(/^test_price_/);
+    expect((await api().post('/subscription_plans', { name: 'premium monthly', interval: 1, intervalCount: 1, priceCents: 50, description: 'x' })).body.errors.name)
+      .toEqual(['Name has already been taken']);
+    const edited = await api().put(`/subscription_plans/${plan.body.data.id}`, { name: 'Renamed', priceCents: 99, description: 'Everything', active: false });
+    expect(edited.body.data).toMatchObject({ name: 'Premium Monthly', priceCents: 5, description: 'Everything', active: false });
+    expect((await api().del(`/subscription_plans/${plan.body.data.id}`)).status).toBe(405);
+
+    const [{ id: accountId }] = await prisma.$queryRawUnsafe<{ id: bigint }[]>(`SELECT account_id AS id FROM bx_block_profile_profiles WHERE user_name = 'kiddo'`);
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO bx_block_stripe_integration_subscriptions (plan_id, account_id, status, auto_renewal, start_date, end_date, created_at, updated_at) VALUES (${plan.body.data.id}, ${accountId}, 'active', true, now(), now() + interval '1 month', now(), now())`,
+    );
+    const subs = await api().get('/user_subscriptions?userName=kidd&status=active');
+    expect(subs.body.total).toBe(1);
+    expect(subs.body.data[0]).toMatchObject({ userName: 'kiddo', planIdLabel: 'Premium Monthly', status: 'active' });
+    expect((await api().put(`/user_subscriptions/${subs.body.data[0].id}`, { status: 'canceled' })).status).toBe(405);
+  });
+
   it('applies the CanCan roles', async () => {
     expect((await api('viewer').get('/cities')).status).toBe(200);
     expect((await api('viewer').post('/cities', { name: 'Iasi', countryId })).status).toBe(403);

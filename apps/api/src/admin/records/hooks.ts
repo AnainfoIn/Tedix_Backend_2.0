@@ -20,6 +20,8 @@ export interface ValidateArgs {
 /** Rules from the Rails models that the field definitions cannot express. */
 export interface ResourceHooks {
   validate?(ctx: HookContext, args: ValidateArgs): Promise<void> | void;
+  /** Runs once the record is valid, before it is written: side effects such as Stripe calls. May change `data`. */
+  beforeSave?(ctx: HookContext, args: { data: Record<string, unknown>; values: Record<string, unknown>; current: Record<string, unknown> | null }): Promise<void> | void;
   afterSave?(ctx: HookContext, id: bigint, data: Record<string, unknown>, before: Record<string, unknown> | null): Promise<void> | void;
   beforeDelete?(ctx: HookContext, id: bigint, current: Record<string, unknown>): Promise<void> | void;
 }

@@ -143,8 +143,9 @@ export function fieldInput(f: FieldDef, mode: 'create' | 'edit'): ReactElement |
 }
 
 function rawInput(f: FieldDef, mode: 'create' | 'edit'): ReactElement | null {
-  if (f.expr || f.form === false || (f.form === 'create' && mode === 'edit')) return null;
-  const disabled = f.form === 'readonly';
+  if (f.expr || f.form === false || (f.form === 'edit' && mode === 'create')) return null;
+  // 'create' fields are shown disabled once saved (Rails `input_html: { disabled: persisted? }`).
+  const disabled = f.form === 'readonly' || (f.form === 'create' && mode === 'edit');
   if (disabled && mode === 'create') return null;
   const common = { key: f.name, source: f.name, label: labelOf(f), helperText: f.hint, disabled, fullWidth: true };
   switch (f.type) {

@@ -375,7 +375,7 @@ export class RecordsService {
 
     for (const f of fields) {
       if (f.expr || isFile(f)) continue;
-      const editable = f.form === undefined || f.form === true || (f.form === 'create' && current === null);
+      const editable = f.form === undefined || f.form === true || (f.form === 'create' && current === null) || (f.form === 'edit' && current !== null);
       const label = f.label ?? humanize(f.name);
       let value: unknown;
       if (editable && (current === null || f.name in input)) {
@@ -461,6 +461,7 @@ export class RecordsService {
 
     await HOOKS[def.key]?.validate?.(this.context(), { data, values, input, files, current, add });
     throwIfErrors(errors);
+    await HOOKS[def.key]?.beforeSave?.(this.context(), { data, values, current });
     Object.defineProperty(data, THROUGH, { value: through, enumerable: false });
     return data;
   }
