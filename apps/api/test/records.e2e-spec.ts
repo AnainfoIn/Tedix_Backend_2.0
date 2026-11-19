@@ -237,6 +237,42 @@ describeDb('generic admin resources (e2e)', () => {
     expect((await api().del(`/campaigns/${id}`)).body.message).toBe('Cannot delete record because dependent campaign rewards, sponsor campaigns exist');
   });
 
+  it('lists claimed rewards only and enforces the claim status rules', async () => {
+    const [{ id: campaignId }] = await prisma.$queryRawUnsafe<{ id: bigint }[]>('SELECT id FROM campaigns LIMIT 1');
+    const [{ id: rewardId }] = await prisma.$queryRawUnsafe<{ id: bigint }[]>(`SELECT id FROM campaign_rewards WHERE campaign_id = ${campaignId} LIMIT 1`);
+    const [{ id: accountId }] = await prisma.$queryRawUnsafe<{ id: bigint }[]>('SELECT id FROM accounts LIMIT 1');
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO campaign_reward_allocations (campaign_id, campaign_reward_id, account_id, reward_type, prize_type, status, reward_gift_name, full_name, phone, created_at, updated_at) VALUES
+       (${campaignId}, ${rewardId}, ${accountId}, 0, 0, 0, 'Bike', NULL, NULL, now(), now()),
+       (${campaignId}, ${rewardId}, ${accountId}, 0, 0, 1, 'Bike', 'Ana Pop', '+40712345678', now(), now())`,
+    );
+    const list = await api().get('/campaign_reward_claims');
+    expect(list.body.total).toBe(1);
+    const claim = list.body.data[0];
+    expect(claim).toMatchObject({ status: 1, rewardGiftName: 'Bike', campaignIdLabel: 'Spring Cup' });
+    expect((await api().get(`/campaign_reward_claims?accountEmail=${encodeURIComponent(claim.accountIdLabel.slice(0, 4))}`)).body.total).toBe(1);
+    const pendingId = Number(claim.id) - 1;
+    expect((await api().get(`/campaign_reward_claims/${pendingId}`)).status).toBe(404);
+    // The campaign is not closed yet, so the claim cannot change (campaign_must_be_closed).
+    expect((await api().put(`/campaign_reward_claims/${claim.id}`, { status: 2 })).body.errors.base).toEqual(['Rewards can only be allocated once the campaign is closed']);
+    await prisma.$executeRawUnsafe(`UPDATE campaigns SET status = 2 WHERE id = ${campaignId}`);
+    const shipped = await api().put(`/campaign_reward_claims/${claim.id}`, { status: 2, trackingNumber: 'TRK1', fullName: 'Hacked' });
+    expect(shipped.body.data).toMatchObject({ status: 2, trackingNumber: 'TRK1', fullName: 'Ana Pop' });
+    expect((await api().put(`/campaign_reward_claims/${claim.id}`, { status: 3 })).body.errors.base).toEqual(['Reward has already been finalized and cannot be edited']);
+    expect((await api().post('/campaign_reward_claims', { status: 1 })).status).toBe(405);
+    expect((await api().del(`/campaign_reward_claims/${claim.id}`)).status).toBe(405);
+
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO monthly_reward_allocations (month, year, metric_type, prize_type, account_id, status, created_at, updated_at) VALUES (1, 2026, 3, 0, ${accountId}, 0, now(), now())`,
+    );
+    expect((await api().get('/monthly_reward_claims')).body.total).toBe(0);
+    await prisma.$executeRawUnsafe('UPDATE monthly_reward_allocations SET status = 1');
+    const monthly = (await api().get('/monthly_reward_claims?metricType=3')).body.data[0];
+    expect((await api().put(`/monthly_reward_claims/${monthly.id}`, { status: 2 })).body.data.status).toBe(2);
+    expect((await api('sub').get('/monthly_reward_claims')).status).toBe(403);
+    expect((await api('viewer').put(`/monthly_reward_claims/${monthly.id}`, { status: 1 })).status).toBe(403);
+  });
+
   it('applies the CanCan roles', async () => {
     expect((await api('viewer').get('/cities')).status).toBe(200);
     expect((await api('viewer').post('/cities', { name: 'Iasi', countryId })).status).toBe(403);

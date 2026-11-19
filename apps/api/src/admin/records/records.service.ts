@@ -95,7 +95,7 @@ export class RecordsService {
     if (!ids.length) return { data: [], total: 0 };
     const fields = await this.liveFields(def);
     const rows = await this.prisma.$queryRawUnsafe<Row[]>(
-      `SELECT ${this.selectList(fields, !!def.position)} FROM ${quote(def.table)} t ${def.joins ?? ''} WHERE t.id = ANY($1::bigint[]) ORDER BY t.id`,
+      `SELECT ${this.selectList(fields, !!def.position)} FROM ${quote(def.table)} t ${def.joins ?? ''} WHERE t.id = ANY($1::bigint[])${def.scope ? ` AND (${def.scope})` : ''} ORDER BY t.id`,
       ids,
     );
     const data = await this.present(def, fields, rows);
@@ -246,7 +246,7 @@ export class RecordsService {
   private async findRow(def: ResourceDef, fields: FieldDef[], id: bigint): Promise<Row> {
     const extra = def.position?.scope ? `, t.${quote(def.position.scope)} AS ${quote(`__${def.position.scope}`)}` : '';
     const rows = await this.prisma.$queryRawUnsafe<Row[]>(
-      `SELECT ${this.selectList(fields, !!def.position)}${extra} FROM ${quote(def.table)} t ${def.joins ?? ''} WHERE t.id = $1`,
+      `SELECT ${this.selectList(fields, !!def.position)}${extra} FROM ${quote(def.table)} t ${def.joins ?? ''} WHERE t.id = $1${def.scope ? ` AND (${def.scope})` : ''}`,
       id,
     );
     if (!rows.length) throw new NotFoundException(`${def.singular} not found`);
@@ -254,7 +254,7 @@ export class RecordsService {
   }
 
   private whereClause(def: ResourceDef, fields: FieldDef[], query: RecordListQuery, params: unknown[]): string {
-    const conds: string[] = [];
+    const conds: string[] = def.scope ? [`(${def.scope})`] : [];
     const add = (value: unknown) => {
       params.push(value);
       return `$${params.length}`;

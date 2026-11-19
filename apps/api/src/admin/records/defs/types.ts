@@ -117,6 +117,8 @@ export interface ResourceDef {
   table: string;
   /** Extra joins after `FROM <table> t` for computed fields. */
   joins?: string;
+  /** ActiveAdmin `scoped_collection`: fixed SQL condition on alias `t`; other records are not reachable. */
+  scope?: string;
   label: string;
   singular: string;
   group: MenuGroup;
