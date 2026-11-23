@@ -8,7 +8,9 @@ import { useEffect, useRef, useState } from 'react';
 import { RaRecord, useDataProvider, useNotify } from 'react-admin';
 import { Link } from 'react-router-dom';
 import { C } from '../theme';
+import { apiFetch } from '../api';
 import { LevelKey, SINGULAR } from './dialogs';
+import { LevelLanguageTabs, LevelTranslation, useLevelLanguages } from './LevelLanguages';
 
 type Rec = Record<string, any>;
 type FileKey = 'image' | 'cheatsheetPdf' | 'summaryPdf' | 'summaryVideo';
@@ -49,6 +51,39 @@ export function EditPanel(props: {
   const [files, setFiles] = useState<Partial<Record<FileKey, File | null>>>({});
   const [busy, setBusy] = useState<null | 'save' | 'move' | 'delete'>(null);
   const [error, setError] = useState<{ message: string; fields: Record<string, string> } | null>(null);
+  const langs = useLevelLanguages(level, id);
+  const [lang, setLang] = useState<number | null>(null);
+  const [translating, setTranslating] = useState(false);
+  useEffect(() => setLang(null), [level, id]);
+
+  const translate = async () => {
+    const d = langs.data;
+    if (!d) return;
+    setTranslating(true);
+    try {
+      const ids = d.languages.filter((l) => l.id !== d.originalLanguageId).map((l) => l.id);
+      const r = await apiFetch<{ data: { results: Array<{ languageId: number; translated: number; kept: number; error?: string }> } }>(
+        `/workspace/levels/${langs.type}/${id}/translate`, { method: 'POST', body: JSON.stringify({ languageIds: ids }) });
+      const failed = r.data.results.filter((x) => x.error);
+      const done = r.data.results.reduce((n, x) => n + x.translated, 0);
+      notify(failed.length ? `Translated ${done}. ${failed.length} failed: ${failed[0].error}` : `Translated the name into ${done} language${done === 1 ? '' : 's'}. Your own edits were kept.`,
+        { type: failed.length ? 'warning' : 'info' });
+    } catch (e) {
+      notify((e as Error).message, { type: 'error' });
+    } finally {
+      setTranslating(false);
+      void langs.reload();
+    }
+  };
+  const setOriginal = async (languageId: number) => {
+    try {
+      await apiFetch(`/workspace/levels/${langs.type}/${id}/original_language`, { method: 'PUT', body: JSON.stringify({ languageId }) });
+      setLang(null);
+      void langs.reload();
+    } catch (e) {
+      notify((e as Error).message, { type: 'error' });
+    }
+  };
 
   const reset = (data: RaRecord) => {
     setRecord(data);
@@ -83,6 +118,7 @@ export function EditPanel(props: {
       const previousData = { ...record };
       const { data: saved } = await dataProvider.update(level, { id, data, previousData });
       reset(saved);
+      void langs.reload();
       notify(`${SINGULAR[level]} saved`, { type: 'info' });
       props.onChanged();
     } catch (e) {
@@ -147,8 +183,14 @@ export function EditPanel(props: {
         {props.canEdit && <Button variant="outlined" color="error" onClick={remove} disabled={!!busy}>Delete</Button>}
       </Stack>
 
+      {langs.data && langs.data.languages.length > 1 && (
+        <LevelLanguageTabs data={langs.data} selected={lang} onSelect={setLang} canEdit={props.canEdit} onTranslate={translate} translating={translating} />
+      )}
+      {lang != null && langs.data && (
+        <LevelTranslation level={level} data={langs.data} languageId={lang} canEdit={props.canEdit} onSaved={() => void langs.reload()} onOriginalChange={setOriginal} />
+      )}
       {!record && !error && <CircularProgress size={20} />}
-      {record && (
+      {lang == null && record && (
         <>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(240px, 1.6fr) repeat(4, minmax(0, 1fr))' }, gap: 1.5, alignItems: 'start' }}>
             <Stack spacing={1.5}>
@@ -179,7 +221,7 @@ export function EditPanel(props: {
         </>
       )}
       {error && !Object.keys(error.fields).length && <Alert severity="error">{error.message}</Alert>}
-      {props.canEdit && record && (
+      {lang == null && props.canEdit && record && (
         <Stack direction="row" spacing={1}>
           <Button variant="contained" onClick={save} disabled={!dirty || !!busy || !name.trim()}
             startIcon={busy === 'save' ? <CircularProgress size={16} color="inherit" /> : undefined}>Save changes</Button>

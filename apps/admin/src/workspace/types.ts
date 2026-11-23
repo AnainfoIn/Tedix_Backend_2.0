@@ -1,6 +1,6 @@
 import { apiFetch } from '../api';
 
-export type ItemType = 'micro_lesson' | 'exercise' | 'question' | 'option';
+export type ItemType = 'micro_lesson' | 'exercise' | 'question' | 'option' | 'grade' | 'subject' | 'master' | 'main' | 'unit' | 'lesson';
 export type Status = 'auto' | 'edited' | 'reviewed';
 
 export interface Language {

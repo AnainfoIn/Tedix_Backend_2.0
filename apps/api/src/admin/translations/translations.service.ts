@@ -10,7 +10,9 @@ import { askClaude, claudeConfigured } from '../latex/claude';
  * admin-owned tables, created here when missing. They only add data: no Rails table or column
  * is changed, and Rails never reads them.
  */
-export type ItemType = 'micro_lesson' | 'exercise' | 'question' | 'option';
+export type LevelType = 'grade' | 'subject' | 'master' | 'main' | 'unit' | 'lesson';
+export type ItemType = 'micro_lesson' | 'exercise' | 'question' | 'option' | LevelType;
+export const LEVEL_TYPES: LevelType[] = ['grade', 'subject', 'master', 'main', 'unit', 'lesson'];
 export type Status = 'auto' | 'edited' | 'reviewed';
 
 export const ITEM_FIELDS: Record<ItemType, string[]> = {
@@ -18,6 +20,12 @@ export const ITEM_FIELDS: Record<ItemType, string[]> = {
   exercise: ['name'],
   question: ['question', 'questionBody', 'hint', 'solution'],
   option: ['option'],
+  grade: ['name'],
+  subject: ['name'],
+  master: ['name'],
+  main: ['name'],
+  unit: ['name'],
+  lesson: ['name'],
 };
 
 const ITEM_SQL: Record<ItemType, { table: string; columns: Record<string, string> }> = {
@@ -25,6 +33,12 @@ const ITEM_SQL: Record<ItemType, { table: string; columns: Record<string, string
   exercise: { table: 'bx_block_assessmenttest_assessments', columns: { name: 'name' } },
   question: { table: 'bx_block_assessmenttest_questionbanks', columns: { question: 'question', questionBody: 'question_body', hint: 'hint', solution: 'solution' } },
   option: { table: 'bx_block_assessmenttest_answer_options', columns: { option: 'option' } },
+  grade: { table: 'categories', columns: { name: 'name' } },
+  subject: { table: 'sub_categories', columns: { name: 'name' } },
+  master: { table: 'bx_block_profile_courses', columns: { name: 'course_name' } },
+  main: { table: 'bx_block_profile_mains', columns: { name: 'name' } },
+  unit: { table: 'bx_block_profile_units', columns: { name: 'name' } },
+  lesson: { table: 'bx_block_profile_lessons', columns: { name: 'name' } },
 };
 
 const STATUSES: Status[] = ['auto', 'edited', 'reviewed'];
@@ -114,10 +128,11 @@ export class TranslationsService implements OnModuleInit {
     return rows.map((r) => ({ id: Number(r.id), name: r.name, code: r.language_code, flag: r.emoji_flag }));
   }
 
-  private async originalLanguageId(itemId: number, languages: Language[]): Promise<number | null> {
+  private async originalLanguageId(itemId: number, languages: Language[], itemType: ItemType = 'micro_lesson'): Promise<number | null> {
     const [row] = await this.prisma.$queryRawUnsafe<Row[]>(
-      `SELECT original_language_id FROM admin_content_languages WHERE item_type = 'micro_lesson' AND item_id = $1`,
+      `SELECT original_language_id FROM admin_content_languages WHERE item_type = $2 AND item_id = $1`,
       itemId,
+      itemType,
     );
     if (row) return Number(row.original_language_id);
     const romanian = languages.find((l) => /^roman/i.test(l.name) || /^RO/i.test(l.code));
@@ -125,16 +140,88 @@ export class TranslationsService implements OnModuleInit {
   }
 
   async setOriginalLanguage(microLessonId: number, languageId: number) {
+    await this.storeOriginalLanguage('micro_lesson', microLessonId, languageId);
+    return this.workspace(microLessonId);
+  }
+
+  private async storeOriginalLanguage(itemType: ItemType, itemId: number, languageId: number) {
     await this.ensureReady();
     const languages = await this.languages();
     if (!languages.some((l) => l.id === languageId)) throw new BadRequestException('Unknown language');
     await this.prisma.$executeRawUnsafe(
-      `INSERT INTO admin_content_languages (item_type, item_id, original_language_id, updated_at) VALUES ('micro_lesson', $1, $2, now())
+      `INSERT INTO admin_content_languages (item_type, item_id, original_language_id, updated_at) VALUES ($3, $1, $2, now())
        ON CONFLICT (item_type, item_id) DO UPDATE SET original_language_id = EXCLUDED.original_language_id, updated_at = now()`,
-      microLessonId,
+      itemId,
       languageId,
+      itemType,
     );
-    return this.workspace(microLessonId);
+  }
+
+  static levelType(value: string): LevelType {
+    if (!(LEVEL_TYPES as string[]).includes(value)) throw new BadRequestException('Unknown curriculum level');
+    return value as LevelType;
+  }
+
+  /** Language tabs of one Grade, Subject, Master, Main, Unit or Lesson: its name in the original and each translation. */
+  async levelWorkspace(type: LevelType, id: number) {
+    await this.ensureReady();
+    const fields: Record<string, string | null> = {};
+    for (const f of ITEM_FIELDS[type]) fields[f] = await this.currentValue(type, id, f);
+    const languages = await this.languages();
+    const originalLanguageId = await this.originalLanguageId(id, languages, type);
+    const translations = await this.translationsOf([{ type, id, fields }]);
+    return { data: { item: { type, id, ...fields }, languages, originalLanguageId, aiConfigured: claudeConfigured(), translations } };
+  }
+
+  async setLevelOriginalLanguage(type: LevelType, id: number, languageId: number) {
+    await this.currentValue(type, id, 'name');
+    await this.storeOriginalLanguage(type, id, languageId);
+    return this.levelWorkspace(type, id);
+  }
+
+  /** Machine translation of a level's name into the chosen languages; own wording is kept unless `replaceEdited`. */
+  async translateLevel(type: LevelType, id: number, body: { languageIds?: unknown; replaceEdited?: boolean }, by: string | null, fetchImpl?: typeof fetch) {
+    const { data } = await this.levelWorkspace(type, id);
+    const targets = (Array.isArray(body.languageIds) ? body.languageIds.map(Number) : []).filter(
+      (l) => l !== data.originalLanguageId && data.languages.some((x) => x.id === l),
+    );
+    if (!targets.length) throw new BadRequestException('Choose at least one language to translate into');
+    const original = data.languages.find((l) => l.id === data.originalLanguageId);
+    const source: Record<string, string> = {};
+    for (const f of ITEM_FIELDS[type]) {
+      const v = (data.item as Row)[f];
+      if (typeof v === 'string' && v.trim()) source[`${type}:${id}:${f}`] = v;
+    }
+    const existing = new Map(data.translations.map((t) => [`${t.itemType}:${t.itemId}:${t.field}:${t.languageId}`, t]));
+    const results: Array<{ languageId: number; translated: number; kept: number; error?: string }> = [];
+    for (const languageId of targets) {
+      const language = data.languages.find((l) => l.id === languageId)!;
+      const todo: Record<string, string> = {};
+      let kept = 0;
+      for (const [key, value] of Object.entries(source)) {
+        const t = existing.get(`${key}:${languageId}`);
+        if (t && t.status !== 'auto' && !body.replaceEdited) kept++;
+        else todo[key] = value;
+      }
+      if (!Object.keys(todo).length) {
+        results.push({ languageId, translated: 0, kept });
+        continue;
+      }
+      try {
+        const translated = await this.translateBatch(todo, original?.name ?? 'the source language', language.name, fetchImpl);
+        let count = 0;
+        for (const [key, value] of Object.entries(translated)) {
+          if (!(key in todo) || typeof value !== 'string' || !value.trim()) continue;
+          const [, , field] = key.split(':');
+          await this.upsert(type, id, field, languageId, value.trim(), 'auto', hashOf(todo[key]), by);
+          count++;
+        }
+        results.push({ languageId, translated: count, kept });
+      } catch (e) {
+        results.push({ languageId, translated: 0, kept, error: (e as Error).message });
+      }
+    }
+    return { data: { results } };
   }
 
   private async ensureReady() {
