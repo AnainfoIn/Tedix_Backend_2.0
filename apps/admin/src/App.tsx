@@ -14,7 +14,7 @@ import { TopBar } from './curriculum/TopBar';
 import { lightTheme } from './theme';
 import { LEVEL_ORDER, LEVELS } from './contents/levels';
 import { CONTENT_PAGES } from './contents/pages';
-import { Dashboard } from './Dashboard';
+const HomeRedirect = () => <Navigate to="/curriculum" replace />;
 import { dataProvider } from './dataProvider';
 import { LoginPage } from './LoginPage';
 import { AppMenu } from './Menu';
@@ -22,6 +22,7 @@ import { RESOURCES } from '../../api/src/admin/records/defs';
 import { pagesFor } from './records/pages';
 import { MicroLessonShow } from './workspace/MicroLessonWorkspace';
 import { ReviewPage } from './workspace/ReviewPage';
+import { MicroLessonSearch } from './curriculum/MicroLessonSearch';
 import { AdminUserCreate, AdminUserEdit, AdminUserList, AdminUserShow } from './resources/adminUsers';
 import { RoleEdit, RoleList, RoleShow } from './resources/roles';
 
@@ -38,7 +39,7 @@ export function App() {
       authProvider={authProvider}
       dataProvider={dataProvider}
       loginPage={LoginPage}
-      dashboard={Dashboard}
+      dashboard={HomeRedirect}
       layout={AppLayout}
       theme={lightTheme}
       darkTheme={null}
@@ -49,6 +50,7 @@ export function App() {
         <Route path="/curriculum" element={<CurriculumPage />} />
         <Route path="/contents" element={<Navigate to="/curriculum" replace />} />
         <Route path="/micro_lessons/:id/review" element={<ReviewPage />} />
+        <Route path="/micro-lessons" element={<MicroLessonSearch />} />
         <Route path="/analytics/:page" element={<AnalyticsPage />} />
       </CustomRoutes>
       {LEVEL_ORDER.map((key) => (

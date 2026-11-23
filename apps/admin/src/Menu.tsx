@@ -1,5 +1,6 @@
 import InsightsIcon from '@mui/icons-material/Insights';
 import { ANALYTICS_PAGES } from './analytics/AnalyticsPage';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
 import { Typography } from '@mui/material';
 import ExpandLess from '@mui/icons-material/ExpandLess';
@@ -32,6 +33,8 @@ function menuEntries(): Map<string, Entry[]> {
 }
 
 const ENTRIES = menuEntries();
+/** Only Curriculum and Micro lessons are shown for now; the other pages still open by their links. */
+const SHOW_OTHER_MENUS = false;
 const OPEN_KEY = 'tedix_admin_menu_open';
 
 function readOpen(): Record<string, boolean> {
@@ -87,16 +90,18 @@ export function AppMenu() {
   };
   return (
     <Menu>
-      <Menu.DashboardItem />
       <PinnedSection title="Contents">
         <RouteItem entry={{ route: '/curriculum', label: 'Curriculum', icon: <MenuBookOutlinedIcon />, permission: 'lessons', priority: 0 }} />
+        <RouteItem entry={{ route: '/micro-lessons', label: 'Micro lessons', icon: <ArticleOutlinedIcon />, permission: 'micro_lessons', priority: 1 }} />
         <CurriculumNote />
       </PinnedSection>
-      <PinnedSection title="More">
-        {[...ENTRIES].filter(([, entries]) => entries.length).map(([name, entries]) => (
-          <Group key={name} name={name} entries={entries} open={open[name] ?? name === activeGroup} onToggle={() => toggle(name)} />
-        ))}
-      </PinnedSection>
+      {SHOW_OTHER_MENUS && (
+        <PinnedSection title="More">
+          {[...ENTRIES].filter(([, entries]) => entries.length).map(([name, entries]) => (
+            <Group key={name} name={name} entries={entries} open={open[name] ?? name === activeGroup} onToggle={() => toggle(name)} />
+          ))}
+        </PinnedSection>
+      )}
     </Menu>
   );
 }
