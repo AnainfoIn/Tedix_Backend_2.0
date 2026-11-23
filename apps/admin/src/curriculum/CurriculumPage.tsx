@@ -2,16 +2,16 @@ import AddIcon from '@mui/icons-material/Add';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
-  Alert, Box, Button, ButtonBase, CircularProgress, Divider, IconButton, ListItemIcon, Menu, MenuItem, Stack, Tooltip, Typography,
+  Alert, Box, Button, ButtonBase, CircularProgress, IconButton, Link as MuiLink, Stack, Tooltip, Typography,
 } from '@mui/material';
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Title, useCanAccess } from 'react-admin';
 import { Link, useSearchParams } from 'react-router-dom';
 import { C } from '../theme';
 import { Curriculum, loadCurriculum, Named, Path, PATH_KEYS, PathKey, pathFromServer, setCountry, useCountry } from './api';
-import { ItemDialog, LevelKey, MicroDialog, Parent, SINGULAR } from './dialogs';
+import { ItemDialog, LevelKey, MicroDialog, Parent } from './dialogs';
+import { EditPanel } from './EditPanel';
 
 const LEVEL_OF: Record<Exclude<PathKey, 'country' | 'micro'>, LevelKey> = {
   grade: 'grades', subject: 'subjects', master: 'masters', main: 'mains', unit: 'units', lesson: 'lessons',
@@ -61,20 +61,26 @@ export function CurriculumPage() {
       const resolved = pathFromServer(d.path);
       settled.current = JSON.stringify(resolved);
       setData(d);
-      if (settled.current !== key) setParams(toParams(resolved), { replace: true });
+      if (settled.current !== key) {
+        const q = toParams(resolved);
+        if (params.get('sel')) q.set('sel', params.get('sel')!);
+        setParams(q, { replace: true });
+      }
     }).catch((e) => live && setError((e as Error).message));
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(path), tick]);
 
-  const go = useCallback((key: PathKey, id: number) => {
+  const go = useCallback((key: PathKey, id: number, selKey?: PathKey) => {
     const next: Path = {};
     for (const k of PATH_KEYS) {
       if (k === key) { next[k] = id; break; }
       next[k] = path[k];
     }
-    setParams(toParams(next));
-  }, [path, setParams]);
+    const q = toParams(next);
+    q.set('sel', selKey ?? params.get('sel') ?? key);
+    setParams(q);
+  }, [path, setParams, params]);
 
   const parent = (upTo: PathKey): Parent => {
     const ids: Parent = {};
@@ -92,13 +98,15 @@ export function CurriculumPage() {
 
   const saved = (key: PathKey | null) => (id: number | null) => {
     setDialog(null);
-    if (key && id) go(key, id);
+    if (key && id) go(key, id, key);
     else if (key && !id) {
       // deleted: drop it from the path so the first remaining item is picked
       const next = { ...path };
       let drop = false;
       for (const k of PATH_KEYS) { if (k === key) drop = true; if (drop) delete next[k]; }
-      setParams(toParams(next));
+      const q = toParams(next);
+      q.set('sel', key);
+      setParams(q);
     }
     setTick((t) => t + 1);
   };
@@ -112,63 +120,93 @@ export function CurriculumPage() {
 
   const ready = data && !error;
   const micro = data?.micro;
+  const sel: Exclude<PathKey, 'country'> = (() => {
+    const want = params.get('sel') as Exclude<PathKey, 'country'> | null;
+    if (want && want in COLS && path[want]) return want;
+    return path.grade ? 'grade' : 'grade';
+  })();
+  const select = (key: Exclude<PathKey, 'country'>, id: number) => go(key, id, key);
+  const countryName = data?.countries.find((c) => c.id === path.country)?.name ?? '';
+
+  // Breadcrumb: Romania / Grade 10 / Mathematics / … down to the selected column.
+  const crumbs: Array<{ key: Exclude<PathKey, 'country'>; name: string }> = [];
+  if (data) {
+    for (const key of COL_ORDER) {
+      const item = (data[COLS[key].list] as Named[]).find((x) => x.id === path[key]);
+      if (!item) break;
+      crumbs.push({ key, name: item.name });
+      if (key === sel) break;
+    }
+  }
+
+  const parentNameOf = (key: Exclude<PathKey, 'country'>) => {
+    const i = COL_ORDER.indexOf(key);
+    if (i === 0) return countryName;
+    const up = COL_ORDER[i - 1];
+    return (data?.[COLS[up].list] as Named[] | undefined)?.find((x) => x.id === path[up])?.name ?? '';
+  };
+
   return (
-    <Stack spacing={2} sx={{ py: 2.5, px: { xs: 0, sm: 1 }, maxWidth: 1400, minWidth: 0, width: '100%' }}>
+    <Stack spacing={2} sx={{ py: 2.5, px: { xs: 0, sm: 1 }, maxWidth: 1600, minWidth: 0, width: '100%' }}>
       <Title title="Curriculum" />
-      <Stack direction="row" spacing={1.25} alignItems="baseline" flexWrap="wrap" useFlexGap>
+      <Stack direction="row" spacing={1.5} alignItems="baseline" flexWrap="wrap" useFlexGap>
         <Typography component="h1" sx={{ fontSize: 22, fontWeight: 700 }}>Curriculum</Typography>
-        <Typography sx={{ fontSize: 13, color: C.muted }}>Pick a grade, subject and master, then work through the columns. + adds, the pencil edits.</Typography>
+        <Box component="nav" aria-label="Breadcrumb" sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, fontSize: 13, color: C.muted }}>
+          <span>{countryName}</span>
+          {crumbs.map((c, i) => (
+            <Fragment key={c.key}>
+              <span>/</span>
+              {i === crumbs.length - 1 ? <Box component="span" sx={{ color: C.text, fontWeight: 600 }}>{c.name}</Box>
+                : <MuiLink component="button" onClick={() => go(c.key, path[c.key]!, c.key)} sx={{ fontSize: 13 }}>{c.name}</MuiLink>}
+            </Fragment>
+          ))}
+        </Box>
       </Stack>
       {error && <Alert severity="error" action={<Button color="inherit" onClick={() => setTick((t) => t + 1)}>Try again</Button>}>{error}</Alert>}
       {!data && !error && <CircularProgress size={24} />}
       {ready && (
         <>
-          <Stack component="nav" aria-label="Grade, subject and master" direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" useFlexGap>
-            <ChipSelect label="Grade" items={data.grades} value={path.grade} onPick={(id) => go('grade', id)} onAdd={canEdit ? () => add('grade') : undefined} onEdit={canEdit ? (id) => edit('grade', id) : undefined} />
-            {path.grade && <ChevronRightIcon sx={{ color: C.faint, fontSize: 18 }} />}
-            {path.grade && <ChipSelect label="Subject" items={data.subjects} value={path.subject} onPick={(id) => go('subject', id)} onAdd={canEdit ? () => add('subject') : undefined} onEdit={canEdit ? (id) => edit('subject', id) : undefined} />}
-            {path.subject && <ChevronRightIcon sx={{ color: C.faint, fontSize: 18 }} />}
-            {path.subject && <ChipSelect label="Master" items={data.masters} value={path.master} onPick={(id) => go('master', id)} onAdd={canEdit ? () => add('master') : undefined} onEdit={canEdit ? (id) => edit('master', id) : undefined} />}
-          </Stack>
-
-          {path.master ? (
-            <Box sx={{ overflowX: 'auto', bgcolor: C.panel, border: `1px solid ${C.line}`, borderRadius: 3 }}>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(220px, 1fr))', minWidth: 900 }}>
-                <Column title="Mains" add={canEdit ? () => add('main') : undefined} enabled>
-                  {data.mains.map((r) => (
-                    <Row key={r.id} selected={r.id === path.main} onClick={() => go('main', r.id)} onEdit={canEdit ? () => edit('main', r.id) : undefined} name={r.name} count={r.count} />
-                  ))}
-                </Column>
-                <Column title="Units" add={canEdit && path.main ? () => add('unit') : undefined} enabled={!!path.main}>
-                  {data.units.map((r) => (
-                    <Row key={r.id} selected={r.id === path.unit} onClick={() => go('unit', r.id)} onEdit={canEdit ? () => edit('unit', r.id) : undefined} name={r.name} count={r.count} />
-                  ))}
-                </Column>
-                <Column title="Lessons" add={canEdit && path.unit ? () => add('lesson') : undefined} enabled={!!path.unit}>
-                  {data.lessons.map((r) => (
-                    <Row key={r.id} selected={r.id === path.lesson} onClick={() => go('lesson', r.id)} onEdit={canEdit ? () => edit('lesson', r.id) : undefined} name={r.name}
-                      sub={`${fmtDay(r.startDate)} – ${fmtDay(r.endDate)} · ${plural(r.count, 'micro lesson')}`} />
-                  ))}
-                </Column>
-                <Column title="Micro lessons" add={canEdit && path.lesson ? () => add('micro') : undefined} enabled={!!path.lesson} last>
-                  {data.microLessons.map((r) => (
-                    <Row key={r.id} strong selected={r.id === path.micro} onClick={() => go('micro', r.id)} onEdit={canEdit ? () => edit('micro', r.id) : undefined} name={r.name}
-                      sub={`${r.type === 0 ? 'Video' : 'Text'} · ${r.exercises ? `${plural(r.exercises, 'exercise')} · ${plural(r.questions, 'question')}` : 'No exercises yet'}`} />
-                  ))}
-                </Column>
-              </Box>
+          <Box sx={{ overflowX: 'auto', bgcolor: C.panel, border: `1px solid ${C.line}`, borderRadius: 3 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: `repeat(${COL_ORDER.length}, minmax(165px, 1fr))`, minWidth: COL_ORDER.length * 165 }}>
+              {COL_ORDER.map((key, i) => {
+                const col = COLS[key];
+                const up = i ? COL_ORDER[i - 1] : null;
+                const enabled = !up || !!path[up];
+                const rows = data[col.list] as Array<Named & Record<string, any>>;
+                return (
+                  <Column key={key} title={col.title} singular={col.singular} enabled={enabled} last={i === COL_ORDER.length - 1}
+                    waiting={up ? `Pick a ${COLS[up].singular} first` : undefined}
+                    add={canEdit && enabled ? () => add(key) : undefined} note={key === 'subject' ? subjectNote(rows, path.subject) : undefined}>
+                    {enabled ? rows.map((r) => (
+                      <Row key={r.id} name={r.name} sub={col.sub?.(r)} count={col.sub ? undefined : r.count}
+                        selected={r.id === path[key]} current={key === sel && r.id === path[key]} strong={key === 'micro'}
+                        onClick={() => select(key, r.id)} />
+                    )) : []}
+                  </Column>
+                );
+              })}
             </Box>
-          ) : (
-            <Box sx={{ bgcolor: C.panel, border: `1px solid ${C.line}`, borderRadius: 3, p: 3 }}>
-              <Typography color="text.secondary">
-                {!data.grades.length ? 'This country has no grades yet. Add one with the Grade chip.'
-                  : !path.subject ? 'This grade has no subjects yet. Add one with the Subject chip.'
-                  : 'This subject has no masters in this grade yet. Add one with the Master chip.'}
-              </Typography>
-            </Box>
-          )}
+          </Box>
 
-          {micro && <MicroCard micro={micro} onEdit={canEdit ? () => edit('micro', micro.id) : undefined} />}
+          {sel === 'micro' && micro && <MicroCard micro={micro} onEdit={canEdit ? () => edit('micro', micro.id) : undefined} />}
+          {sel !== 'micro' && path[sel] && (() => {
+            const list = data[COLS[sel].list] as Array<Named & Record<string, any>>;
+            const idx = list.findIndex((x) => x.id === path[sel]);
+            const item = list[idx];
+            if (!item) return null;
+            const nextKey = COL_ORDER[COL_ORDER.indexOf(sel) + 1];
+            const childCount = sel === 'lesson' ? (item.count ?? 0) : (item.count ?? 0);
+            return (
+              <EditPanel key={`${sel}-${item.id}`} level={LEVEL_OF[sel as keyof typeof LEVEL_OF]} id={item.id} position={idx + 1} siblings={list.length}
+                parentName={parentNameOf(sel)} childCount={childCount} canEdit={!!canEdit}
+                onOpenChildren={() => {
+                  const first = (data[COLS[nextKey].list] as Named[])[0];
+                  if (childCount && first) go(nextKey, path[nextKey] ?? first.id, nextKey);
+                  else if (canEdit) add(nextKey);
+                }}
+                onChanged={(deleted) => (deleted ? saved(sel)(null) : setTick((t) => t + 1))} />
+            );
+          })()}
         </>
       )}
 
@@ -180,101 +218,85 @@ export function CurriculumPage() {
   );
 }
 
+const subjectNote = (rows: Array<Record<string, any>>, id?: number) => {
+  const also = rows.find((r) => r.id === id)?.also as string | null | undefined;
+  return also ? `${rows.find((r) => r.id === id)?.name} is also in ${also}.` : undefined;
+};
+
+const fmtRange = (r: Record<string, any>) => `${fmtDay(r.startDate)} – ${fmtDay(r.endDate)} · ${plural(r.count, 'micro lesson')}`;
+
+const COLS: Record<Exclude<PathKey, 'country'>, { title: string; singular: string; list: keyof Curriculum; sub?: (r: Record<string, any>) => string }> = {
+  grade: { title: 'Grades', singular: 'grade', list: 'grades' },
+  subject: { title: 'Subjects', singular: 'subject', list: 'subjects' },
+  master: { title: 'Masters', singular: 'master', list: 'masters' },
+  main: { title: 'Mains', singular: 'main', list: 'mains' },
+  unit: { title: 'Units', singular: 'unit', list: 'units', sub: (r) => plural(r.count, 'lesson') },
+  lesson: { title: 'Lessons', singular: 'lesson', list: 'lessons', sub: fmtRange },
+  micro: {
+    title: 'Micro lessons', singular: 'micro lesson', list: 'microLessons',
+    sub: (r) => `${r.type === 0 ? 'Video' : 'Text'} · ${r.exercises ? `${plural(r.exercises, 'exercise')} · ${plural(r.questions, 'question')}` : 'No exercises yet'}`,
+  },
+};
+const COL_ORDER = Object.keys(COLS) as Array<Exclude<PathKey, 'country'>>;
+
 function toParams(p: Path) {
   const q = new URLSearchParams();
   for (const k of PATH_KEYS) if (p[k]) q.set(k, String(p[k]));
   return q;
 }
 
-function ChipSelect(props: { label: string; items: Named[]; value?: number; onPick: (id: number) => void; onAdd?: () => void; onEdit?: (id: number) => void }) {
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const current = props.items.find((i) => i.id === props.value);
-  const close = (then?: () => void) => { setAnchor(null); then?.(); };
-  return (
-    <>
-      <ButtonBase onClick={(e) => setAnchor(e.currentTarget)} aria-haspopup="menu"
-        sx={{ height: 30, px: 1.25, border: `1px solid ${C.line}`, borderRadius: 999, bgcolor: C.panel, fontSize: 13, gap: 0.75, color: C.text, '&:hover': { borderColor: C.faint } }}>
-        <Box component="span" sx={{ color: C.muted }}>{props.label}</Box>
-        <span>{current?.name ?? `No ${props.label.toLowerCase()}`}</span>
-        <ExpandMoreIcon sx={{ fontSize: 16, color: C.faint }} />
-      </ButtonBase>
-      <Menu anchorEl={anchor} open={!!anchor} onClose={() => close()} slotProps={{ paper: { sx: { minWidth: 220, maxHeight: 420 } } }}>
-        {props.items.map((i) => (
-          <MenuItem key={i.id} selected={i.id === props.value} onClick={() => close(() => props.onPick(i.id))}>{i.name}</MenuItem>
-        ))}
-        {!props.items.length && <MenuItem disabled>No {props.label.toLowerCase()}s yet</MenuItem>}
-        {(props.onAdd || (props.onEdit && current)) && <Divider />}
-        {props.onEdit && current && (
-          <MenuItem onClick={() => close(() => props.onEdit!(current.id))}>
-            <ListItemIcon><EditOutlinedIcon fontSize="small" /></ListItemIcon>Edit {current.name}
-          </MenuItem>
-        )}
-        {props.onAdd && (
-          <MenuItem onClick={() => close(props.onAdd)} sx={{ color: C.blue }}>
-            <ListItemIcon><AddIcon fontSize="small" sx={{ color: C.blue }} /></ListItemIcon>Add {props.label.toLowerCase()}
-          </MenuItem>
-        )}
-      </Menu>
-    </>
-  );
-}
-
-function Column(props: { title: string; add?: () => void; enabled: boolean; last?: boolean; children: ReactNode[] }) {
+function Column(props: {
+  title: string; singular: string; add?: () => void; enabled: boolean; waiting?: string; last?: boolean; note?: string; children: ReactNode[];
+}) {
   const count = props.children.length;
-  const singular = props.title === 'Micro lessons' ? 'micro lesson' : props.title.slice(0, -1).toLowerCase();
   return (
-    <Box component="section" aria-label={props.title} sx={{ borderRight: props.last ? 0 : `1px solid ${C.line}`, minWidth: 0 }}>
+    <Box component="section" aria-label={props.title}
+      sx={{ borderRight: props.last ? 0 : `1px solid ${C.line}`, minWidth: 0, display: 'flex', flexDirection: 'column', bgcolor: props.enabled ? C.panel : '#FAFBFC' }}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ px: 1.75, py: 1.25, borderBottom: `1px solid ${C.line}`, minHeight: 55 }}>
-        <Typography sx={{ fontSize: 13, fontWeight: 600 }}>
+        <Typography sx={{ fontSize: 13, fontWeight: 600, color: props.enabled ? C.text : C.muted }}>
           {props.title} {props.enabled && <Box component="span" sx={{ color: C.muted, fontWeight: 400 }}>{count}</Box>}
         </Typography>
         {props.add && (
-          <Tooltip title={`Add ${singular}`}>
-            <IconButton onClick={props.add} aria-label={`Add ${singular}`} size="small"
+          <Tooltip title={`Add ${props.singular}`}>
+            <IconButton onClick={props.add} aria-label={`Add ${props.singular}`} size="small"
               sx={{ width: 30, height: 30, border: `1px solid ${C.line}`, borderRadius: 2, color: C.blue }}>
               <AddIcon sx={{ fontSize: 18 }} />
             </IconButton>
           </Tooltip>
         )}
       </Stack>
-      <Stack spacing={0.25} sx={{ p: 0.75 }}>
+      <Stack spacing={0.25} sx={{ p: 0.75, height: { xs: 260, md: 320 }, overflowY: 'auto', scrollbarGutter: 'stable' }}>
         {props.children}
+        {!props.enabled && props.waiting && <Typography sx={{ fontSize: 13, color: C.muted, px: 1.25, py: 1.25 }}>{props.waiting}</Typography>}
         {props.enabled && !count && (
-          <Box sx={{ px: 1.25, py: 1.5 }}>
-            <Typography sx={{ fontSize: 13, color: C.muted }}>No {singular}s yet.</Typography>
-            {props.add && <Button size="small" startIcon={<AddIcon />} onClick={props.add} sx={{ mt: 0.5, ml: -0.5 }}>Add {singular}</Button>}
+          <Box sx={{ px: 1.25, py: 1.25 }}>
+            <Typography sx={{ fontSize: 13, color: C.muted }}>No {props.singular}s yet.</Typography>
+            {props.add && <Button size="small" startIcon={<AddIcon />} onClick={props.add} sx={{ mt: 0.5, ml: -0.5 }}>Add {props.singular}</Button>}
           </Box>
         )}
       </Stack>
+      {props.note && <Typography sx={{ fontSize: 12, color: C.muted, px: 1.75, py: 1, borderTop: `1px solid ${C.line}` }}>{props.note}</Typography>}
     </Box>
   );
 }
 
-function Row(props: { name: string; sub?: string; count?: number | null; selected: boolean; strong?: boolean; onClick: () => void; onEdit?: () => void }) {
-  const solid = props.selected && props.strong;
+function Row(props: { name: string; sub?: string; count?: number | null; selected: boolean; current: boolean; strong?: boolean; onClick: () => void }) {
+  const solid = props.current;
   return (
-    <Box sx={{
-      position: 'relative', borderRadius: 2,
-      bgcolor: solid ? C.blue : props.selected ? C.blueSoft : 'transparent',
-      color: solid ? '#fff' : props.selected ? C.blueDark : C.text,
-      '&:hover': { bgcolor: solid ? C.blue : props.selected ? C.blueSoft : C.page },
-      '&:hover .edit, &:focus-within .edit': { opacity: 1 },
-    }}>
-      <ButtonBase onClick={props.onClick} aria-current={props.selected ? 'true' : undefined}
-        sx={{ width: '100%', textAlign: 'left', justifyContent: 'flex-start', display: 'flex', gap: 1, px: 1.25, py: 1.1, pr: props.onEdit ? 5 : 1.25, borderRadius: 2, fontSize: 14 }}>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Box sx={{ fontWeight: props.selected ? 600 : 400, overflowWrap: 'anywhere' }}>{props.name}</Box>
-          {props.sub && <Box sx={{ fontSize: 12, color: props.selected ? 'inherit' : C.muted, mt: 0.25 }}>{props.sub}</Box>}
-        </Box>
-        {props.count != null && <Box sx={{ fontSize: 12, color: props.selected ? 'inherit' : C.muted }}>{props.count}</Box>}
-      </ButtonBase>
-      {props.onEdit && (
-        <IconButton className="edit" aria-label={`Edit ${props.name}`} onClick={props.onEdit} size="small"
-          sx={{ position: 'absolute', right: 4, top: 6, opacity: { xs: 1, md: props.selected ? 1 : 0 }, color: 'inherit', transition: 'opacity .15s' }}>
-          <EditOutlinedIcon sx={{ fontSize: 17 }} />
-        </IconButton>
-      )}
-    </Box>
+    <ButtonBase onClick={props.onClick} aria-current={props.current ? 'true' : undefined}
+      sx={{
+        width: '100%', textAlign: 'left', justifyContent: 'flex-start', display: 'flex', gap: 1, px: 1.25, py: 1.1, borderRadius: 2, fontSize: 14, flexShrink: 0,
+        bgcolor: solid ? C.blue : props.selected ? C.blueSoft : 'transparent',
+        color: solid ? '#fff' : props.selected ? C.blueDark : C.text,
+        '&:hover': { bgcolor: solid ? C.blue : props.selected ? C.blueSoft : C.page },
+      }}>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Box sx={{ fontWeight: props.selected ? 600 : 400, overflowWrap: 'anywhere' }}>{props.name}</Box>
+        {props.sub && <Box sx={{ fontSize: 12, color: props.selected ? 'inherit' : C.muted, mt: 0.25 }}>{props.sub}</Box>}
+      </Box>
+      {props.count != null && <Box sx={{ fontSize: 12, color: props.selected ? 'inherit' : C.muted }}>{props.count}</Box>}
+      <ChevronRightIcon sx={{ fontSize: 16, color: props.selected ? 'inherit' : C.faint, opacity: props.selected ? 1 : 0.7 }} />
+    </ButtonBase>
   );
 }
 
@@ -297,9 +319,9 @@ function MicroCard({ micro, onEdit }: { micro: NonNullable<Curriculum['micro']>;
         <Typography component="h2" sx={{ fontSize: 20, fontWeight: 700 }}>{micro.name}</Typography>
         <Typography sx={{ fontSize: 13, color: C.muted }}>{micro.type === 0 ? 'Video content' : 'Text content'}{pos}</Typography>
         <Box sx={{ flex: 1 }} />
-        {onEdit && <Button variant="outlined" startIcon={<EditOutlinedIcon />} onClick={onEdit} sx={{ height: 38, borderColor: C.line }}>Edit content</Button>}
+        {onEdit && <Button variant="outlined" startIcon={<EditOutlinedIcon />} onClick={onEdit} sx={{ height: 38, borderColor: C.line }}>Quick edit</Button>}
         <Button component={Link} to={`/micro_lessons/${micro.id}/show`} variant="contained" endIcon={<ArrowForwardIcon />} sx={{ height: 38, px: 2 }}>
-          Open micro lesson workspace
+          Edit micro lesson
         </Button>
       </Stack>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, minmax(0,1fr))', md: 'repeat(4, minmax(0, 1fr))' }, gap: 1.5 }}>
@@ -308,7 +330,7 @@ function MicroCard({ micro, onEdit }: { micro: NonNullable<Curriculum['micro']>;
         <Stat label="Options" value={micro.options} note={`in ${plural(micro.optionGroups, 'option group')}`} />
         <Stat label="To check" value={micro.toCheck} note={micro.toCheck ? 'questions with no question text' : 'nothing to check'} warn={micro.toCheck > 0} />
       </Box>
-      <Typography sx={{ fontSize: 13, color: C.muted }}>Exercises, questions, option groups and options are managed in the micro lesson workspace.</Typography>
+      <Typography sx={{ fontSize: 13, color: C.muted }}>Edit micro lesson opens the full editor: the Romanian, English, German and Hungarian tabs, the text with Insert and Formula, Translate, files and exercises.</Typography>
     </Box>
   );
 }

@@ -36,21 +36,27 @@ export class CurriculumService {
       if (p[key]) path[key] = p[key];
     };
 
-    out.grades = (await this.q('SELECT id, name, position FROM categories WHERE country_id = $1 ORDER BY position NULLS LAST, id', countryId))
-      .map((r) => ({ id: n(r.id)!, name: r.name, position: n(r.position) }));
+    out.grades = (await this.q(`SELECT c.id, c.name, c.position, (SELECT COUNT(*) FROM categories_sub_categories l WHERE l.category_id = c.id) AS count
+       FROM categories c WHERE c.country_id = $1 ORDER BY c.position NULLS LAST, c.id`, countryId))
+      .map((r) => ({ id: n(r.id)!, name: r.name, position: n(r.position), count: n(r.count) }));
     settle('gradeId', out.grades);
     if (p.gradeId) {
       out.subjects = (await this.q(
-        `SELECT s.id, s.name FROM sub_categories s JOIN categories_sub_categories l ON l.sub_category_id = s.id
+        `SELECT s.id, s.name,
+           (SELECT COUNT(*) FROM bx_block_profile_courses m WHERE m.sub_category_id = s.id AND m.category_id = $1) AS count,
+           (SELECT string_agg(c.name, ', ' ORDER BY c.position NULLS LAST, c.id) FROM categories_sub_categories l2 JOIN categories c ON c.id = l2.category_id
+             WHERE l2.sub_category_id = s.id AND l2.category_id <> $1) AS also
+         FROM sub_categories s JOIN categories_sub_categories l ON l.sub_category_id = s.id
          WHERE l.category_id = $1 AND s.country_id = $2 ORDER BY s.name, s.id`, p.gradeId, countryId,
-      )).map((r) => ({ id: n(r.id)!, name: r.name }));
+      )).map((r) => ({ id: n(r.id)!, name: r.name, count: n(r.count), also: r.also ?? null }));
     }
     settle('subjectId', out.subjects);
     if (p.gradeId && p.subjectId) {
       out.masters = (await this.q(
-        'SELECT id, course_name AS name, position FROM bx_block_profile_courses WHERE category_id = $1 AND sub_category_id = $2 ORDER BY position NULLS LAST, id',
+        `SELECT c.id, c.course_name AS name, c.position, (SELECT COUNT(*) FROM bx_block_profile_mains m WHERE m.course_id = c.id) AS count
+         FROM bx_block_profile_courses c WHERE c.category_id = $1 AND c.sub_category_id = $2 ORDER BY c.position NULLS LAST, c.id`,
         p.gradeId, p.subjectId,
-      )).map((r) => ({ id: n(r.id)!, name: r.name, position: n(r.position) }));
+      )).map((r) => ({ id: n(r.id)!, name: r.name, position: n(r.position), count: n(r.count) }));
     }
     settle('masterId', out.masters);
     if (p.masterId) {
