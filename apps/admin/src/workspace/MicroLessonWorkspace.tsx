@@ -39,9 +39,20 @@ export function Code({ children }: { children: ReactNode }) {
 export const shortCode = (l: Language) => (l.code ?? '').slice(0, 2).toUpperCase();
 
 const PATH: Array<[string, string]> = [
-  ['countryId', 'countries'], ['categoryId', 'grades'], ['subCategoryId', 'subjects'], ['courseId', 'masters'],
-  ['mainId', 'mains'], ['unitId', 'units'], ['lessonId', 'lessons'],
+  ['countryId', 'country'], ['categoryId', 'grade'], ['subCategoryId', 'subject'], ['courseId', 'master'],
+  ['mainId', 'main'], ['unitId', 'unit'], ['lessonId', 'lesson'],
 ];
+
+/** The Curriculum screen opened at this record's path, down to `upTo` (a PATH field) or the micro lesson. */
+const curriculumAt = (record: Rec, upTo?: string) => {
+  const q = new URLSearchParams();
+  for (const [field, key] of PATH) {
+    if (record[field] != null) q.set(key, String(record[field]));
+    if (field === upTo) return `/curriculum?${q}`;
+  }
+  q.set('micro', String(record.id));
+  return `/curriculum?${q}`;
+};
 
 /** Micro lesson page: one language bar for the whole lesson, its content, files and exercises. */
 export function MicroLessonShow() {
@@ -117,10 +128,10 @@ function WorkspaceBody() {
     <Stack spacing={2} sx={{ mt: 1 }}>
       <Paper variant="outlined" sx={{ p: '16px 20px', display: 'flex', flexDirection: 'column', gap: 2 }}>
         <Breadcrumbs separator="/" maxItems={20} sx={{ fontSize: 15 }} aria-label="Breadcrumb">
-          <MuiLink component={Link} to="/contents">Contents</MuiLink>
-          {PATH.map(([field, resource]) =>
+          <MuiLink component={Link} to={curriculumAt(record)}>Curriculum</MuiLink>
+          {PATH.map(([field]) =>
             record[field] != null ? (
-              <MuiLink key={field} component={Link} to={`/${resource}/${record[field]}/show`}>{record[`${field}Label`] ?? `#${record[field]}`}</MuiLink>
+              <MuiLink key={field} component={Link} to={curriculumAt(record, field)}>{record[`${field}Label`] ?? `#${record[field]}`}</MuiLink>
             ) : null,
           )}
           <Typography color="text.primary" sx={{ fontSize: 15 }}>{record.name}</Typography>
