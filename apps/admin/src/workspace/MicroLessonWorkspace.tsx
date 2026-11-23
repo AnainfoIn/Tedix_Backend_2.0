@@ -1,14 +1,11 @@
 import AddIcon from '@mui/icons-material/Add';
-import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
-import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
-import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import TranslateIcon from '@mui/icons-material/Translate';
 import {
   Alert, Box, Breadcrumbs, Button as MuiButton, ButtonBase, Card, Chip, CircularProgress, Link as MuiLink, Paper, Stack, Typography,
 } from '@mui/material';
-import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  DeleteWithConfirmButton, EditButton, Show, TopToolbar, useCanAccess, useNotify, useRecordContext,
+  DeleteWithConfirmButton, EditButton, Show, TopToolbar, useCanAccess, useNotify, useRecordContext, useSidebarState,
 } from 'react-admin';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError } from '../api';
@@ -56,6 +53,14 @@ const curriculumAt = (record: Rec, upTo?: string) => {
 
 /** Micro lesson page: one language bar for the whole lesson, its content, files and exercises. */
 export function MicroLessonShow() {
+  // The micro lesson uses the full width: the side menu is hidden here (the menu button still opens it).
+  const [sidebarOpen, setSidebarOpen] = useSidebarState();
+  const wasOpen = useRef(sidebarOpen);
+  useEffect(() => {
+    setSidebarOpen(false);
+    return () => setSidebarOpen(wasOpen.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <Show actions={<Actions />} title={<Title />} component="div" sx={{ '& .RaShow-card': { bgcolor: 'transparent', boxShadow: 'none' } }}>
       <WorkspaceBody />
@@ -198,19 +203,17 @@ function WorkspaceBody() {
         )}
       </Paper>
 
-      <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <Outline ws={ws} record={record} language={language} isOriginal={isOriginal} sel={sel} onSelect={(item) => go({ item })} canEdit={canEdit} />
-        <Card variant="outlined" sx={{ flex: '999 1 520px', minWidth: 0, p: '18px 20px' }}>
-          {sel.kind === 'text' && (
-            <TextPane ws={ws} record={record} language={language} original={original} isOriginal={isOriginal} canEdit={canEdit} onSaved={reload}
-              onGoLanguage={(id) => go({ lang: id })} />
-          )}
-          {sel.kind === 'files' && <FilesPane record={record} language={language} original={original} isOriginal={isOriginal} />}
-          {sel.kind === 'exercise' && (
-            <ExercisePane ws={ws} exerciseId={sel.id} language={language} original={original} isOriginal={isOriginal} canEdit={canEdit} onSaved={reload} />
-          )}
-        </Card>
-      </Box>
+      <Card variant="outlined" sx={{ p: '18px 20px' }}>
+        <TextPane ws={ws} record={record} language={language} original={original} isOriginal={isOriginal} canEdit={canEdit} onSaved={reload}
+          onGoLanguage={(id) => go({ lang: id })} />
+      </Card>
+
+      <Card variant="outlined" sx={{ p: '18px 20px' }}>
+        <FilesPane record={record} language={language} original={original} isOriginal={isOriginal} />
+      </Card>
+
+      <ExerciseList ws={ws} record={record} language={language} original={original} isOriginal={isOriginal} canEdit={canEdit}
+        open={sel.kind === 'exercise' ? sel.id : null} onOpen={(id) => go({ item: id ? `exercise-${id}` : 'text' })} onSaved={reload} />
 
       {translateOpen && original && (
         <TranslateDialog
@@ -233,91 +236,62 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Outline(props: {
-  ws: Workspace; record: Rec; language: Language | null; isOriginal: boolean; sel: Selection; onSelect: (item: string) => void; canEdit: boolean;
+/** Exercises under the content: one row each with its type, questions and status; Edit opens it below the row. */
+function ExerciseList(props: {
+  ws: Workspace; record: Rec; language: Language | null; original: Language | null; isOriginal: boolean; canEdit: boolean;
+  open: number | null; onOpen: (id: number | null) => void; onSaved: () => Promise<void> | void;
 }) {
-  const { ws, record, language, isOriginal, sel } = props;
-  const isVideo = Number(record.microLessonType) === 0;
-  const statusFor = (filter: (t: string, id: number) => boolean) => {
+  const { ws, record, language, isOriginal } = props;
+  const statusFor = (id: number) => {
     if (isOriginal || !language) return null;
-    const st = statusOf(summarize(ws, language.id, filter));
-    return st.tone === 'miss' && st.label === 'Nothing to translate' ? null : <ToneChip tone={st.tone === 'miss' ? 'miss' : st.tone} label={st.label.replace(' · complete', '')} sx={{ height: 20, fontSize: 11 }} />;
-  };
-  const exerciseIds = (id: number) => {
     const e = ws.exercises.find((x) => x.id === id)!;
     const q = new Set(e.questions.map((x) => x.id));
     const o = new Set(e.questions.flatMap((x) => x.options.map((y) => y.id)));
-    return (t: string, i: number) => (t === 'exercise' && i === id) || (t === 'question' && q.has(i)) || (t === 'option' && o.has(i));
+    const st = statusOf(summarize(ws, language.id, (t, i) => (t === 'exercise' && i === id) || (t === 'question' && q.has(i)) || (t === 'option' && o.has(i))));
+    return st.label === 'Nothing to translate' ? null : <ToneChip tone={st.tone} label={st.label.replace(' · complete', '')} sx={{ height: 20, fontSize: 11 }} />;
   };
-  const files = [record.cheatsheetPdf?.filename, record.summaryPdf?.filename, !isVideo && record.summaryVideo?.filename].filter(Boolean);
-
   return (
-    <Paper variant="outlined" component="nav" aria-label="Micro lesson content" sx={{ flex: '0 0 280px', maxWidth: '100%', display: 'flex', flexDirection: 'column', pb: 1 }}>
-      <Section>Content</Section>
-      <OutlineItem
-        on={sel.kind === 'text'} onClick={() => props.onSelect('text')} icon={isVideo ? <PlayCircleOutlineIcon fontSize="small" /> : <ArticleOutlinedIcon fontSize="small" />}
-        title={isVideo ? 'Video content' : 'Text content'}
-        sub={isOriginal ? (isVideo ? record.summaryVideo?.filename ?? 'No video yet' : `${String(ws.lesson.description ?? '').length} characters`) : 'Name and text'}
-        status={statusFor((t) => t === 'micro_lesson')}
-      />
-      <Section>Files</Section>
-      <OutlineItem
-        on={sel.kind === 'files'} onClick={() => props.onSelect('files')} icon={<PictureAsPdfOutlinedIcon fontSize="small" />}
-        title="Cheatsheet, summary PDF and video" sub={files.length ? `${files.length} ${files.length === 1 ? 'file' : 'files'}` : 'No files yet'}
-      />
-      <Section
-        action={props.canEdit ? (
-          <MuiButton size="small" startIcon={<AddIcon />} component={Link}
+    <Card variant="outlined" sx={{ p: 0, overflow: 'hidden' }}>
+      <Stack direction="row" alignItems="center" sx={{ px: '20px', py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+        <Typography variant="h6" sx={{ fontWeight: 600, flex: 1 }}>Exercises <Box component="span" sx={{ color: 'text.secondary', fontWeight: 400 }}>{ws.exercises.length}</Box></Typography>
+        {props.canEdit && (
+          <MuiButton variant="outlined" size="small" startIcon={<AddIcon />} component={Link}
             to={`/exercises/create?source=${encodeURIComponent(JSON.stringify({ microLessonId: record.id }))}`}>
-            Add
+            Add exercise
           </MuiButton>
-        ) : undefined}
-      >
-        Exercises · {ws.exercises.length}
-      </Section>
-      {ws.exercises.length === 0 && <Typography variant="body2" color="text.secondary" sx={{ px: 1.75, py: 1 }}>No exercises yet.</Typography>}
+        )}
+      </Stack>
+      {ws.exercises.length === 0 && <Typography variant="body2" color="text.secondary" sx={{ px: '20px', py: 2 }}>No exercises yet.</Typography>}
       {ws.exercises.map((e, i) => {
         const tr = !isOriginal && language ? ws.translations.find((t) => t.itemType === 'exercise' && t.itemId === e.id && t.field === 'name' && t.languageId === language.id) : null;
-        const types = [...new Set(e.questions.map((q) => q.questionType))];
+        const types = [...new Set(e.questions.map((q) => QUESTION_TYPE(q.questionType)))];
+        const isOpen = props.open === e.id;
         return (
-          <OutlineItem
-            key={e.id} on={sel.kind === 'exercise' && sel.id === e.id} onClick={() => props.onSelect(`exercise-${e.id}`)}
-            title={`${i + 1}. ${tr?.value ?? e.name}`}
-            sub={types.length === 1 ? QUESTION_TYPE(types[0]) : `${CATEGORY_LABELS[e.categoryType] ?? 'Exercise'} · ${e.questions.length} questions`}
-            status={statusFor(exerciseIds(e.id))}
-          />
+          <Box key={e.id} sx={{ borderBottom: i < ws.exercises.length - 1 ? 1 : 0, borderColor: 'divider' }}>
+            <Stack direction="row" alignItems="center" spacing={2} sx={{ px: '20px', py: 1.25, bgcolor: isOpen ? 'primary.light' : 'transparent', flexWrap: 'wrap', rowGap: 0.5 }}>
+              <Typography sx={{ width: 24, color: 'text.secondary', fontSize: 14 }}>{i + 1}.</Typography>
+              <Box sx={{ flex: '1 1 220px', minWidth: 0 }}>
+                <Typography sx={{ fontSize: 15, fontWeight: 500 }} noWrap>{tr?.value ?? e.name}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {CATEGORY_LABELS[e.categoryType] ?? 'Exercise'}{e.isAha ? ' · AHA' : ''} · {e.questions.length} question{e.questions.length === 1 ? '' : 's'}{types.length ? ` · ${types.join(', ')}` : ''}
+                </Typography>
+              </Box>
+              {statusFor(e.id)}
+              <MuiButton size="small" variant={isOpen ? 'contained' : 'outlined'} onClick={() => props.onOpen(isOpen ? null : e.id)}>
+                {isOpen ? 'Close' : props.canEdit ? 'Edit' : 'View'}
+              </MuiButton>
+            </Stack>
+            {isOpen && (
+              <Box sx={{ px: '20px', py: 2, borderTop: 1, borderColor: 'divider' }}>
+                <ExercisePane ws={ws} exerciseId={e.id} language={language} original={props.original} isOriginal={isOriginal} canEdit={props.canEdit} onSaved={props.onSaved} />
+              </Box>
+            )}
+          </Box>
         );
       })}
-    </Paper>
+    </Card>
   );
 }
 
 const QUESTION_TYPE = (t: number) => QUESTION_TYPE_LABELS[t] ?? `Type ${t}`;
 
-function Section({ children, action }: { children: ReactNode; action?: ReactNode }) {
-  return (
-    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ px: 1.75, pt: 1.5, pb: 0.75, minHeight: 32 }}>
-      <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.4, letterSpacing: '.06em' }}>{children}</Typography>
-      {action}
-    </Stack>
-  );
-}
-
-function OutlineItem(props: { on: boolean; onClick: () => void; title: string; sub?: string; status?: ReactNode; icon?: ReactNode }) {
-  return (
-    <ButtonBase
-      onClick={props.onClick}
-      sx={{
-        justifyContent: 'flex-start', textAlign: 'left', gap: 1.25, px: 1.75, py: 1.1, width: '100%',
-        bgcolor: props.on ? '#e3f2fd' : 'transparent', color: props.on ? '#0d47a1' : 'text.primary', '&:hover': { bgcolor: props.on ? '#e3f2fd' : 'action.hover' },
-      }}
-    >
-      {props.icon && <Box sx={{ color: 'text.secondary', display: 'flex' }}>{props.icon}</Box>}
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography noWrap sx={{ fontSize: 14, fontWeight: props.on ? 500 : 400 }}>{props.title}</Typography>
-        {props.sub && <Typography noWrap variant="caption" color="text.secondary" component="div">{props.sub}</Typography>}
-      </Box>
-      {props.status}
-    </ButtonBase>
-  );
-}

@@ -98,7 +98,7 @@ export function ExercisePane(props: {
   return (
     <Stack spacing={2}>
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
-        <Typography variant="h6" sx={{ fontWeight: 500 }}>{index + 1}. {translatedName || exercise.name}</Typography>
+        <Typography sx={{ fontWeight: 600, fontSize: 16 }}>{index + 1}. {translatedName || exercise.name}</Typography>
         {isOriginal ? <ToneChip tone="orig" label={`Original · ${original?.name ?? ''}`} /> : st && <ToneChip tone={st.tone} label={st.label} />}
         <Box sx={{ flex: 1 }} />
         <Button component={Link} to={`/exercises/${exercise.id}/show`} size="small">{isOriginal ? 'Edit exercise' : `Change in ${original?.name}`}</Button>

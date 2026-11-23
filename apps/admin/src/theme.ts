@@ -23,7 +23,7 @@ export const lightTheme: RaThemeOptions = {
     button: { textTransform: 'none', fontWeight: 600 },
     h1: { fontWeight: 700 }, h2: { fontWeight: 700 }, h3: { fontWeight: 700 }, h4: { fontWeight: 700 }, h5: { fontWeight: 700 }, h6: { fontWeight: 600 },
   },
-  sidebar: { width: 230, closedWidth: 56 },
+  sidebar: { width: 230, closedWidth: 0 },
   components: {
     ...defaultTheme.components,
     MuiAppBar: { styleOverrides: { root: { backgroundColor: C.panel, color: C.text, boxShadow: 'none', borderBottom: `1px solid ${C.line}` } } },
