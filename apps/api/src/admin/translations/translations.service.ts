@@ -41,6 +41,9 @@ const ITEM_SQL: Record<ItemType, { table: string; columns: Record<string, string
   lesson: { table: 'bx_block_profile_lessons', columns: { name: 'name' } },
 };
 
+/** Items created from this moment on default to English as their original language. */
+export const ENGLISH_PRIMARY_FROM = Date.parse('2026-11-23T15:45:00Z');
+
 const STATUSES: Status[] = ['auto', 'edited', 'reviewed'];
 
 export const SCHEMA_SQL = [
@@ -135,8 +138,16 @@ export class TranslationsService implements OnModuleInit {
       itemType,
     );
     if (row) return Number(row.original_language_id);
-    const romanian = languages.find((l) => /^roman/i.test(l.name) || /^RO/i.test(l.code));
-    return (romanian ?? languages[0])?.id ?? null;
+    // Content written before English became the primary language is Romanian; anything newer is English.
+    const def = ITEM_SQL[itemType];
+    const [item] = def
+      ? await this.prisma.$queryRawUnsafe<Row[]>(`SELECT created_at FROM ${def.table} WHERE id = $1`, itemId).catch(() => [] as Row[])
+      : [];
+    const isNew = !!item?.created_at && new Date(item.created_at).getTime() >= ENGLISH_PRIMARY_FROM;
+    const pick = isNew
+      ? languages.find((l) => /^english/i.test(l.name) || /^EN/i.test(l.code))
+      : languages.find((l) => /^roman/i.test(l.name) || /^RO/i.test(l.code));
+    return (pick ?? languages[0])?.id ?? null;
   }
 
   async setOriginalLanguage(microLessonId: number, languageId: number) {
