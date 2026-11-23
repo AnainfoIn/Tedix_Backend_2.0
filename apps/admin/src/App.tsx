@@ -19,6 +19,7 @@ import { AppMenu } from './Menu';
 import { RESOURCES } from '../../api/src/admin/records/defs';
 import { pagesFor } from './records/pages';
 import { MicroLessonShow } from './workspace/MicroLessonWorkspace';
+import { ReviewPage } from './workspace/ReviewPage';
 import { AdminUserCreate, AdminUserEdit, AdminUserList, AdminUserShow } from './resources/adminUsers';
 import { RoleEdit, RoleList, RoleShow } from './resources/roles';
 
@@ -42,6 +43,7 @@ export function App() {
     >
       <CustomRoutes>
         <Route path="/contents" element={<ContentsTree />} />
+        <Route path="/micro_lessons/:id/review" element={<ReviewPage />} />
         <Route path="/analytics/:page" element={<AnalyticsPage />} />
       </CustomRoutes>
       {LEVEL_ORDER.map((key) => (

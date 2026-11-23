@@ -33,7 +33,11 @@ export function ExercisePane(props: {
       for (const { field, label } of QUESTION_FIELDS) {
         if (q[field]?.trim()) out.push({ key: `question:${q.id}:${field}`, type: 'question', id: q.id, field, label, source: q[field]!, multiline: true });
       }
-      q.options.forEach((o) => out.push({ key: `option:${o.id}:option`, type: 'option', id: o.id, field: 'option', label: 'Option', source: o.option }));
+      const groups = groupsOf(q.options);
+      groups.forEach(([, opts], g) => opts.forEach((o, j) => out.push({
+        key: `option:${o.id}:option`, type: 'option', id: o.id, field: 'option',
+        label: `${groups.length > 1 ? `Group ${g + 1} · ` : ''}Option ${j + 1}${o.isCorrect ? ' (correct)' : ''}`, source: o.option,
+      })));
     });
     return out;
   }, [exercise]);
@@ -187,14 +191,18 @@ function OriginalExercise({ exercise }: { exercise: Workspace['exercises'][numbe
           ))}
           {q.options.length > 0 && (
             <Box>
-              <Typography variant="caption" color="text.secondary">Options</Typography>
-              {q.options.map((o, j) => (
-                <Stack key={o.id} direction="row" spacing={1} alignItems="center" sx={{ py: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ width: 22 }}>{j + 1}.</Typography>
-                  <Typography variant="body2" sx={{ flex: 1 }}>{plain(o.option)}</Typography>
-                  {o.sequenceNumber != null && <Typography variant="caption" color="text.secondary">Order {o.sequenceNumber}</Typography>}
-                  {o.isCorrect && <ToneChip tone="rev" label={<Stack direction="row" alignItems="center" gap={0.5}><CheckIcon sx={{ fontSize: 14 }} />Correct</Stack>} />}
-                </Stack>
+              {groupsOf(q.options).map(([groupId, opts], g, all) => (
+                <Box key={groupId} sx={{ border: 1, borderColor: 'divider', borderRadius: 1, px: 1.5, py: 1, mt: 1 }}>
+                  <Typography variant="caption" color="text.secondary">{all.length > 1 ? `Option group ${g + 1}` : 'Option group'} · {opts.length} option{opts.length === 1 ? '' : 's'}</Typography>
+                  {opts.map((o, j) => (
+                    <Stack key={o.id} direction="row" spacing={1} alignItems="center" sx={{ py: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ width: 22 }}>{j + 1}.</Typography>
+                      <Typography variant="body2" sx={{ flex: 1 }}>{plain(o.option)}</Typography>
+                      {o.sequenceNumber != null && <Typography variant="caption" color="text.secondary">Order {o.sequenceNumber}</Typography>}
+                      {o.isCorrect && <ToneChip tone="rev" label={<Stack direction="row" alignItems="center" gap={0.5}><CheckIcon sx={{ fontSize: 14 }} />Correct</Stack>} />}
+                    </Stack>
+                  ))}
+                </Box>
               ))}
             </Box>
           )}
@@ -203,4 +211,11 @@ function OriginalExercise({ exercise }: { exercise: Workspace['exercises'][numbe
       ))}
     </Stack>
   );
+}
+
+/** Options of a question in their option groups, in the order the groups come. */
+function groupsOf<T extends { groupId: number }>(options: T[]): Array<[number, T[]]> {
+  const m = new Map<number, T[]>();
+  for (const o of options) m.set(o.groupId, [...(m.get(o.groupId) ?? []), o]);
+  return [...m.entries()];
 }

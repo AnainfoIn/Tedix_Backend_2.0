@@ -180,7 +180,8 @@ function WorkspaceBody() {
         })}
         <Box sx={{ flex: 1 }} />
         {canEdit && others.length > 0 && (
-          <Stack direction="row" alignItems="center" sx={{ px: 2 }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2 }}>
+            <MuiButton component={Link} to={`/micro_lessons/${record.id}/review?lang=${isOriginal ? others[0].id : language?.id}`}>Review all</MuiButton>
             <MuiButton variant="outlined" startIcon={<TranslateIcon />} onClick={() => setTranslateOpen(true)}>Translate…</MuiButton>
           </Stack>
         )}

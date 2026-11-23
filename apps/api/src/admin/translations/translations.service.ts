@@ -315,7 +315,7 @@ export class TranslationsService implements OnModuleInit {
    */
   async translate(
     microLessonId: number,
-    body: { languageIds?: unknown; include?: { text?: boolean; exercises?: boolean }; replaceEdited?: boolean; onlyMissing?: boolean },
+    body: { languageIds?: unknown; include?: { text?: boolean; exercises?: boolean }; replaceEdited?: boolean; onlyMissing?: boolean; only?: unknown },
     by: string | null,
     fetchImpl?: typeof fetch,
   ) {
@@ -344,6 +344,12 @@ export class TranslationsService implements OnModuleInit {
           for (const o of q.options) put('option', o.id, 'option', o.option);
         }
       }
+    }
+
+    // Translate just these fields ("type:id:field"), e.g. one outdated hint.
+    if (Array.isArray(body.only) && body.only.length) {
+      const only = new Set(body.only.map(String));
+      for (const key of Object.keys(source)) if (!only.has(key)) delete source[key];
     }
 
     const existing = new Map(data.translations.map((t) => [`${t.itemType}:${t.itemId}:${t.field}:${t.languageId}`, t]));

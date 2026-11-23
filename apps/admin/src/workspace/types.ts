@@ -86,7 +86,7 @@ export interface TranslateResult {
   error?: string;
 }
 
-export const translateLesson = (id: number, body: { languageIds: number[]; include: { text: boolean; exercises: boolean }; replaceEdited: boolean; onlyMissing?: boolean }) =>
+export const translateLesson = (id: number, body: { languageIds: number[]; include: { text: boolean; exercises: boolean }; replaceEdited: boolean; onlyMissing?: boolean; only?: string[] }) =>
   apiFetch<{ data: { results: TranslateResult[] } }>(`/workspace/micro_lessons/${id}/translate`, { method: 'POST', body: JSON.stringify(body) }).then((r) => r.data.results);
 
 /** Lookup of translations by item, field and language. */

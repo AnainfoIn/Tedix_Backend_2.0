@@ -1,6 +1,8 @@
 import AddBoxOutlinedIcon from '@mui/icons-material/AddBoxOutlined';
+import FunctionsIcon from '@mui/icons-material/Functions';
 import { Box, Button, Stack, TextField, Typography } from '@mui/material';
 import { useRef, useState } from 'react';
+import { FormulaDialog, insertFormula } from '../latex/FormulaDialog';
 import { InsertDialog } from '../latex/InsertDialog';
 import { LatexPreview } from '../latex/LatexInput';
 
@@ -19,6 +21,8 @@ export function LatexEditor(props: {
   minRows?: number;
 }) {
   const [open, setOpen] = useState(false);
+  const [formula, setFormula] = useState(false);
+  const formulaAt = useRef<number | null>(null);
   const cursor = useRef<number | null>(null);
   const [snapshot, setSnapshot] = useState({ current: '', cursor: null as number | null });
   const track = (e: React.SyntheticEvent) => {
@@ -42,7 +46,13 @@ export function LatexEditor(props: {
           >
             Insert
           </Button>
-          <Typography variant="caption" color="text.secondary">From a file or pasted text, converted to LaTeX and previewed on a phone.</Typography>
+          <Button
+            variant="outlined" size="small" startIcon={<FunctionsIcon />}
+            onClick={() => { formulaAt.current = cursor.current; setFormula(true); }}
+          >
+            Formula
+          </Button>
+          <Typography variant="caption" color="text.secondary">Insert adds a file or pasted text as LaTeX. Formula adds one formula at the cursor.</Typography>
         </Stack>
       )}
       <TextField
@@ -56,6 +66,12 @@ export function LatexEditor(props: {
           open={open} onClose={() => setOpen(false)} current={snapshot.current} cursor={snapshot.cursor} imagesOf={props.imagesOf}
           languageName={props.languageName}
           onInsert={(next) => { props.onChange(next); cursor.current = null; setOpen(false); }}
+        />
+      )}
+      {formula && (
+        <FormulaDialog
+          open={formula} onClose={() => setFormula(false)}
+          onInsert={(f) => { props.onChange(insertFormula(props.value, formulaAt.current, f)); cursor.current = null; setFormula(false); }}
         />
       )}
     </Stack>

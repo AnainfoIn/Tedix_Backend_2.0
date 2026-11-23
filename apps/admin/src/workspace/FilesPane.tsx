@@ -1,6 +1,7 @@
 import PictureAsPdfOutlinedIcon from '@mui/icons-material/PictureAsPdfOutlined';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import { Alert, Box, Button, Link as MuiLink, Stack, Typography } from '@mui/material';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ToneChip } from './MicroLessonWorkspace';
 import { Language } from './types';
@@ -16,6 +17,7 @@ const FILES: Array<{ key: string; label: string; video?: boolean }> = [
 /** Micro lesson materials. Originals are replaced on the Edit page; files per language come later. */
 export function FilesPane({ record, language, original, isOriginal }: { record: Rec; language: Language | null; original: Language | null; isOriginal: boolean }) {
   const files = FILES.filter((f) => !(f.video && Number(record.microLessonType) === 0));
+  const [preview, setPreview] = useState<string | null>(null);
   return (
     <Stack spacing={2}>
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -45,8 +47,18 @@ export function FilesPane({ record, language, original, isOriginal }: { record: 
                 <Typography variant="body2" color="text.secondary">No file uploaded yet.</Typography>
               )}
             </Stack>
-            {isOriginal && (
-              <Button component={Link} to={`/micro_lessons/${record.id}`} size="small">{file?.url ? 'Replace' : 'Upload'}</Button>
+            <Stack direction="row" spacing={0.5}>
+              {file?.url && <Button size="small" onClick={() => setPreview((p) => (p === f.key ? null : f.key))}>{preview === f.key ? 'Hide' : 'Preview'}</Button>}
+              {isOriginal && (
+                <Button component={Link} to={`/micro_lessons/${record.id}`} size="small">{file?.url ? 'Replace' : 'Upload'}</Button>
+              )}
+            </Stack>
+            {preview === f.key && file?.url && (
+              <Box sx={{ gridColumn: '1 / -1' }}>
+                {f.video
+                  ? <Box component="video" src={file.url} controls sx={{ width: '100%', maxWidth: 640, borderRadius: 1 }} />
+                  : <Box component="iframe" src={file.url} title={f.label} sx={{ width: '100%', height: 560, border: 1, borderColor: 'divider', borderRadius: 1 }} />}
+              </Box>
             )}
           </Box>
         );
