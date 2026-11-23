@@ -1,9 +1,10 @@
 import AddBoxOutlinedIcon from '@mui/icons-material/AddBoxOutlined';
 import FunctionsIcon from '@mui/icons-material/Functions';
-import { Box, Button, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, CircularProgress, Stack, TextField, Typography } from '@mui/material';
 import { useRef, useState } from 'react';
 import { FormulaDialog, insertFormula } from '../latex/FormulaDialog';
-import { InsertDialog, PhonePreview } from '../latex/InsertDialog';
+import { convertText, InsertDialog, PhonePreview } from '../latex/InsertDialog';
+import { planInsert } from '../latex/insertContent';
 import { LatexPreview } from '../latex/LatexInput';
 
 /**
@@ -81,6 +82,10 @@ export function LatexEditor(props: {
     return (
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) 320px' }, gap: 3, alignItems: 'start' }}>
         <Stack spacing={1.25} sx={{ minWidth: 0 }}>
+          {!props.readOnly && (
+            <PasteBox languageName={props.languageName}
+              onConverted={(latex) => { props.onChange(planInsert(props.value, latex, cursor.current).next); cursor.current = null; }} />
+          )}
           {editorBlock}
         </Stack>
         <Stack spacing={1} alignItems="center" sx={{ position: { md: 'sticky' }, top: { md: 72 } }}>
@@ -104,5 +109,49 @@ export function LatexEditor(props: {
       {editorBlock}
       {dialogs}
     </Stack>
+  );
+}
+
+/** Paste plain text in the lesson's language; Convert turns it into LaTeX and adds it to the content (at the cursor, else at the end). */
+function PasteBox(props: { languageName?: string; onConverted: (latex: string) => void }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ severity: 'success' | 'warning' | 'error'; text: string } | null>(null);
+  const lang = (props.languageName ?? '').replace(/\s*\(original\)$/, '') || 'the lesson language';
+  const convert = async () => {
+    if (!text.trim()) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await convertText(text.trim());
+      props.onConverted(r.latex);
+      setText('');
+      setNote(r.warning ? { severity: 'warning', text: r.warning } : {
+        severity: 'success',
+        text: r.by === 'ai' ? 'Converted with Claude and added to the content. Check it in the phone preview.' : 'Converted with the built-in converter and added. Check it in the phone preview; it is best with simple maths.',
+      });
+    } catch (e) {
+      setNote({ severity: 'error', text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 2, p: 1.5, bgcolor: 'background.default' }}>
+      <Stack spacing={1}>
+        <TextField
+          label={`Paste ${lang} text`} value={text} onChange={(e) => setText(e.target.value)} multiline minRows={3} maxRows={10} fullWidth
+          placeholder="Paste the lesson text as you would write it, e.g. Două sferturi fac o jumătate: 1/4 + 1/4 = 1/2."
+          sx={{ bgcolor: 'background.paper' }}
+        />
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Button variant="contained" onClick={convert} disabled={!text.trim() || busy} startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}>
+            {busy ? 'Converting…' : 'Convert to LaTeX and insert'}
+          </Button>
+          {text && !busy && <Button color="inherit" onClick={() => setText('')}>Clear</Button>}
+        </Stack>
+        {note && <Alert severity={note.severity} onClose={() => setNote(null)}>{note.text}</Alert>}
+      </Stack>
+    </Box>
   );
 }

@@ -21,8 +21,22 @@ const WORD_FILE = /\.docx$/i;
 const LATER_FILE = /\.(pdf|png|jpe?g|webp|gif|heic|doc)$/i;
 
 let aiStatus: Promise<boolean> | null = null;
-const aiAvailable = () =>
+export const aiAvailable = () =>
   (aiStatus ??= apiFetch<{ data: { aiConversion: boolean } }>('/latex/status').then((r) => !!r.data.aiConversion).catch(() => false));
+
+/** Plain text (any language) to stored LaTeX: Claude when the server has it, else the built-in converter. */
+export async function convertText(text: string): Promise<{ latex: string; by: 'ai' | 'rules'; warning?: string }> {
+  if (await aiAvailable()) {
+    try {
+      const r = await apiFetch<{ data: { latex: string } }>('/latex/convert', { method: 'POST', body: JSON.stringify({ text }) });
+      return { latex: r.data.latex, by: 'ai' };
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status < 500) throw e;
+      return { latex: englishToLatex(text), by: 'rules', warning: `${e.message} Used the built-in converter instead.` };
+    }
+  }
+  return { latex: englishToLatex(text), by: 'rules' };
+}
 
 /**
  * Insert pop-up for the micro lesson's text content:
