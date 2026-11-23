@@ -18,6 +18,7 @@ import { LoginPage } from './LoginPage';
 import { AppMenu } from './Menu';
 import { RESOURCES } from '../../api/src/admin/records/defs';
 import { pagesFor } from './records/pages';
+import { MicroLessonShow } from './workspace/MicroLessonWorkspace';
 import { AdminUserCreate, AdminUserEdit, AdminUserList, AdminUserShow } from './resources/adminUsers';
 import { RoleEdit, RoleList, RoleShow } from './resources/roles';
 
@@ -86,6 +87,7 @@ export function App() {
           options={{ label: def.label }}
           icon={ListAltIcon}
           {...pagesFor(def)}
+          {...(def.key === 'micro_lessons' ? { show: MicroLessonShow } : {})}
           recordRepresentation={def.representation ?? 'id'}
         />
       ))}

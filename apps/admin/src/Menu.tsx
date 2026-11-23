@@ -1,6 +1,8 @@
 import InsightsIcon from '@mui/icons-material/Insights';
 import { ANALYTICS_PAGES } from './analytics/AnalyticsPage';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
+import { Divider, Typography } from '@mui/material';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import { Collapse, List, ListItemButton, ListItemText } from '@mui/material';
@@ -88,9 +90,32 @@ export function AppMenu() {
   return (
     <Menu>
       <Menu.DashboardItem />
-      {[...ENTRIES].filter(([, entries]) => entries.length).map(([name, entries]) => (
+      <PinnedSection title="Contents">
+        <RouteItem entry={{ route: '/contents', label: 'Curriculum', icon: <MenuBookOutlinedIcon />, permission: 'contents', priority: 0 }} />
+        <Menu.ResourceItem name="countries" />
+      </PinnedSection>
+      <PinnedSection title="Languages">
+        <Menu.ResourceItem name="languages" />
+      </PinnedSection>
+      <Divider sx={{ my: 1 }} />
+      {[...ENTRIES].filter(([name, entries]) => entries.length && !PINNED_GROUPS.has(name)).map(([name, entries]) => (
         <Group key={name} name={name} entries={entries} open={open[name] ?? name === activeGroup} onToggle={() => toggle(name)} />
       ))}
     </Menu>
+  );
+}
+
+/** The groups the new design shows first, always open; their other pages are reached from Curriculum. */
+const PINNED_GROUPS = new Set(['Contents', 'Languages']);
+
+function PinnedSection({ title, children }: { title: string; children: ReactNode }) {
+  const [sidebarOpen] = useSidebarState();
+  return (
+    <>
+      {sidebarOpen && (
+        <Typography variant="overline" color="text.secondary" sx={{ px: 2, pt: 1, display: 'block', letterSpacing: '.08em', lineHeight: 2 }}>{title}</Typography>
+      )}
+      {children}
+    </>
   );
 }

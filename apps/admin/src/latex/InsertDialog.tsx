@@ -34,8 +34,12 @@ export function InsertDialog(props: {
   current: string;
   cursor: number | null;
   imagesOf?: string;
+  /** Language the content goes into, e.g. "Romanian (original)". */
+  languageName?: string;
   onInsert: (next: string) => void;
 }) {
+  const lang = props.languageName ?? 'Romanian (original)';
+  const langShort = lang.replace(/\s*\(.*\)$/, '');
   const record = useRecordContext<Rec>();
   const [source, setSource] = useState('');
   const [latex, setLatex] = useState('');
@@ -135,7 +139,7 @@ export function InsertDialog(props: {
             Text content{record?.name ? ` · ${record.name}` : ''} · {props.cursor === null || !props.current.trim() ? 'added at the end' : 'inserted after the line with the cursor'}
           </Typography>
         </Box>
-        <Chip label="Into Romanian (original)" color="primary" size="small" />
+        <Chip label={`Into ${lang}`} color="primary" size="small" />
         <IconButton aria-label="Close" onClick={props.onClose}><CloseIcon /></IconButton>
       </DialogTitle>
       <DialogContent dividers>
@@ -173,7 +177,7 @@ export function InsertDialog(props: {
               />
               <Stack direction="row" alignItems="center" justifyContent="flex-end" flexWrap="wrap" useFlexGap gap={1}>
                 <Typography variant="caption" color="text.secondary" sx={{ flex: '1 1 200px' }}>
-                  {ai === null ? '' : ai ? 'Converted with Claude. Keeps the Romanian wording.' : 'Built-in converter (AI conversion is not set up on this server).'}
+                  {ai === null ? '' : ai ? 'Converted with Claude. Keeps your wording and language.' : 'Built-in converter (AI conversion is not set up on this server).'}
                 </Typography>
                 <Button
                   variant="outlined" onClick={convert} disabled={!source.trim() || busy}
@@ -223,11 +227,11 @@ export function InsertDialog(props: {
       </DialogContent>
       <DialogActions sx={{ px: 3, py: 1.5, flexWrap: 'wrap', gap: 1 }}>
         <Typography variant="caption" color="text.secondary" sx={{ flex: 1, minWidth: 200 }}>
-          Only the Romanian text content changes. Nothing is saved until you press Save on the micro lesson.
+          Only the {langShort} text content changes. Nothing is saved until you press Save.
         </Typography>
         <Button onClick={props.onClose}>Cancel</Button>
         <Button variant="contained" startIcon={<CheckIcon />} disabled={!canInsert} onClick={() => props.onInsert(plan.next)}>
-          Insert into Romanian
+          Insert into {langShort}
         </Button>
       </DialogActions>
     </Dialog>

@@ -1,10 +1,9 @@
+import { askClaude } from './claude';
 import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 
 /** Longest text the Insert pop-up may send for conversion (characters). */
 export const MAX_CONVERT_CHARS = 8000;
 
-const DEFAULT_MODEL = 'claude-sonnet-5-5';
-const API_URL = 'https://api.anthropic.com/v1/messages';
 
 export const CONVERT_SYSTEM_PROMPT = String.raw`You convert lesson text for the Tedix maths app into the LaTeX format its content fields store.
 
@@ -39,32 +38,14 @@ export class LatexService {
   async convert(text: unknown, fetchImpl: typeof fetch = fetch): Promise<{ data: { latex: string; source: 'ai' } }> {
     if (typeof text !== 'string' || !text.trim()) throw new BadRequestException('Add some text to convert');
     if (text.length > MAX_CONVERT_CHARS) throw new BadRequestException(`Text is too long to convert (at most ${MAX_CONVERT_CHARS} characters)`);
-    const key = this.apiKey;
-    if (!key) throw new ServiceUnavailableException('AI conversion is not set up (ANTHROPIC_API_KEY is missing)');
-
-    let response: Response;
+    if (!this.apiKey) throw new ServiceUnavailableException('AI conversion is not set up (ANTHROPIC_API_KEY is missing)');
+    let out: string;
     try {
-      response = await fetchImpl(API_URL, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({
-          model: process.env.ANTHROPIC_MODEL?.trim() || DEFAULT_MODEL,
-          max_tokens: 4096,
-          system: CONVERT_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: text }],
-        }),
-        signal: AbortSignal.timeout(60_000),
-      });
+      out = await askClaude(CONVERT_SYSTEM_PROMPT, text, { fetchImpl });
     } catch (e) {
-      this.logger.warn(`Claude API request failed: ${(e as Error).message}`);
-      throw new ServiceUnavailableException('AI conversion is not reachable right now. Try again in a moment.');
-    }
-    const body = (await response.json().catch(() => null)) as { content?: Array<{ type: string; text?: string }>; error?: { message?: string } } | null;
-    if (!response.ok) {
-      this.logger.warn(`Claude API answered ${response.status}: ${body?.error?.message ?? ''}`);
+      this.logger.warn(`Conversion failed: ${(e as Error).message}`);
       throw new ServiceUnavailableException('AI conversion failed. Try again, or write the LaTeX by hand.');
     }
-    const out = (body?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text ?? '').join('');
     const latex = cleanLatex(out);
     if (!latex) throw new ServiceUnavailableException('AI conversion returned nothing. Try again.');
     return { data: { latex, source: 'ai' } };
