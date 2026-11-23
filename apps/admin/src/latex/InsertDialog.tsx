@@ -247,7 +247,7 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
   );
 }
 
-function PhonePreview(props: { device: 'phone' | 'tablet'; plan: { before: string; after: string }; addition: string; imagesOf?: string; title?: string }) {
+export function PhonePreview(props: { device: 'phone' | 'tablet'; plan: { before: string; after: string }; addition: string; imagesOf?: string; title?: string }) {
   const byKey = useContentImages(props.imagesOf);
   const lines = (s: string) => (s.trim() ? contentLines(s) : []);
   const before = lines(props.plan.before);

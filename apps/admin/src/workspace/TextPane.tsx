@@ -1,5 +1,5 @@
 import AutorenewIcon from '@mui/icons-material/Autorenew';
-import { Alert, Box, Button, CircularProgress, Collapse, Link as MuiLink, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, CircularProgress, Collapse, Link as MuiLink, Stack, TextField, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 import { useEffect, useState } from 'react';
 import { useDataProvider, useNotify, useRefresh } from 'react-admin';
 import { LatexPreview } from '../latex/LatexInput';
@@ -21,21 +21,31 @@ function OriginalText({ ws, record, original, canEdit, onSaved, onGoLanguage }: 
   const dataProvider = useDataProvider();
   const notify = useNotify();
   const refresh = useRefresh();
-  const isVideo = Number(record.microLessonType) === 0;
+  const savedType: 0 | 1 = Number(record.microLessonType) === 0 ? 0 : 1;
   const saved = String(record.description ?? '');
+  const [type, setType] = useState<0 | 1>(savedType);
   const [draft, setDraft] = useState(saved);
+  const [video, setVideo] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => setDraft(saved), [saved]);
-  const dirty = draft !== saved;
-  const problems = draft.trim() ? checkLatex(draft) : [];
+  useEffect(() => { setType(savedType); setVideo(null); }, [savedType]);
+  const isVideo = type === 0;
+  const hasVideo = !!video || !!record.summaryVideo?.url;
+  const dirty = type !== savedType || (isVideo ? !!video : draft !== saved);
+  const problems = !isVideo && draft.trim() ? checkLatex(draft) : [];
   const others = ws.languages.filter((l) => l.id !== original?.id);
   const outdated = others.filter((l) => summarize(ws, l.id, (t) => t === 'micro_lesson').outdated > 0);
+  const canSave = dirty && !busy && (isVideo ? hasVideo : !!draft.trim() && problems.length === 0);
 
   const save = async () => {
     setBusy(true);
     try {
-      await dataProvider.update('micro_lessons', { id: record.id, data: { description: draft }, previousData: record });
-      notify('Text content saved', { type: 'info' });
+      const data: Record<string, unknown> = { microLessonType: type };
+      if (isVideo) { if (video) data.summaryVideo = { rawFile: video, title: video.name }; }
+      else data.description = draft;
+      await dataProvider.update('micro_lessons', { id: record.id, data, previousData: record });
+      notify(isVideo ? 'Video content saved' : 'Text content saved', { type: 'info' });
+      setVideo(null);
       refresh();
       await onSaved();
     } catch (e) {
@@ -44,44 +54,59 @@ function OriginalText({ ws, record, original, canEdit, onSaved, onGoLanguage }: 
       setBusy(false);
     }
   };
+  const discard = () => { setType(savedType); setDraft(saved); setVideo(null); };
 
   return (
     <Stack spacing={2}>
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
-        <Typography variant="h6" sx={{ fontWeight: 500 }}>{isVideo ? 'Video content' : 'Text content'}</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 600 }}>Content</Typography>
         <ToneChip tone="orig" label={`Original · ${original?.name ?? 'original language'}`} />
+        <Box sx={{ flex: 1 }} />
+        <ToggleButtonGroup size="small" exclusive value={type} disabled={!canEdit} onChange={(_, v) => v != null && setType(v)} aria-label="Content type">
+          <ToggleButton value={1} sx={{ px: 2 }}>Text</ToggleButton>
+          <ToggleButton value={0} sx={{ px: 2 }}>Video</ToggleButton>
+        </ToggleButtonGroup>
       </Stack>
       {isVideo ? (
-        <VideoBlock record={record} />
-      ) : (
-        <>
-          <LatexEditor
-            value={draft} onChange={setDraft} imagesOf={MICRO_LESSON} label="Content (Text)" readOnly={!canEdit} minRows={8}
-            languageName={`${original?.name ?? 'the original'} (original)`}
-          />
-          {outdated.length > 0 && !dirty && (
-            <Alert severity="info">
-              You changed the {original?.name} text. <b>{outdated.map((l) => l.name).join(', ')}</b> still {outdated.length === 1 ? 'shows' : 'show'} the previous
-              version.{' '}
-              <MuiLink component="button" onClick={() => onGoLanguage(outdated[0].id)}>Update their translations</MuiLink>
-            </Alert>
+        <Stack spacing={1.5}>
+          {video ? <Typography variant="body2">New video: <b>{video.name}</b>. Save to upload it.</Typography> : <VideoBlock record={record} />}
+          {canEdit && (
+            <Button component="label" variant="outlined" sx={{ alignSelf: 'flex-start' }}>
+              {hasVideo ? 'Replace video' : 'Choose video'}
+              <input hidden type="file" accept="video/mp4,video/3gpp,video/x-flv" onChange={(e) => setVideo(e.target.files?.[0] ?? null)} />
+            </Button>
           )}
-          {dirty && others.length > 0 && (
-            <Typography variant="caption" color="text.secondary">
-              Saving changes the {original?.name} original. Translations of the text become <b>Outdated</b> and can be translated again.
+          <Typography variant="caption" color="text.secondary">MP4, 3GP or FLV, up to 50 MB.</Typography>
+        </Stack>
+      ) : (
+        <LatexEditor
+          phone value={draft} onChange={setDraft} imagesOf={MICRO_LESSON} label="Content (Text)" readOnly={!canEdit} minRows={16}
+          languageName={`${original?.name ?? 'the original'} (original)`} title={record.name}
+        />
+      )}
+      {!isVideo && outdated.length > 0 && !dirty && (
+        <Alert severity="info">
+          You changed the {original?.name} text. <b>{outdated.map((l) => l.name).join(', ')}</b> still {outdated.length === 1 ? 'shows' : 'show'} the previous
+          version.{' '}
+          <MuiLink component="button" onClick={() => onGoLanguage(outdated[0].id)}>Update their translations</MuiLink>
+        </Alert>
+      )}
+      {type !== savedType && (
+        <Alert severity="warning">Saving switches this micro lesson to {isVideo ? 'video' : 'text'} content.</Alert>
+      )}
+      {problems.length > 0 && <Alert severity="error">Line {problems[0].line}: {problems[0].message}. Fix it to save.</Alert>}
+      {canEdit && (
+        <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
+          {dirty && !isVideo && others.length > 0 && (
+            <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+              Saving changes the {original?.name} original. Translations of the text become <b>Outdated</b>.
             </Typography>
           )}
-          {canEdit && (
-            <Stack direction="row" spacing={1} justifyContent="flex-end">
-              <Button disabled={!dirty || busy} onClick={() => setDraft(saved)} color="inherit">Discard</Button>
-              <Button variant="contained" disabled={!dirty || busy || problems.length > 0 || !draft.trim()} onClick={save}
-                startIcon={busy ? <CircularProgress size={16} /> : undefined}>
-                Save
-              </Button>
-            </Stack>
-          )}
-          {problems.length > 0 && <Alert severity="error">Line {problems[0].line}: {problems[0].message}. Fix it to save.</Alert>}
-        </>
+          <Button disabled={!dirty || busy} onClick={discard} color="inherit">Discard</Button>
+          <Button variant="contained" disabled={!canSave} onClick={save} startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}>
+            Save
+          </Button>
+        </Stack>
       )}
     </Stack>
   );
@@ -192,7 +217,7 @@ function TranslatedText({ ws, record, language, original, canEdit, onSaved }: Pa
               {ws.lesson.description ? <LatexPreview latex={ws.lesson.description} imagesOf={MICRO_LESSON} /> : <Typography variant="body2">Empty</Typography>}
             </Stack>
           </Collapse>
-          <LatexEditor value={text} onChange={setText} imagesOf={MICRO_LESSON} label={`Content (Text) · ${language.name}`} readOnly={!canEdit} languageName={language.name} minRows={8} />
+          <LatexEditor phone value={text} onChange={setText} imagesOf={MICRO_LESSON} label={`Content (Text) · ${language.name}`} readOnly={!canEdit} languageName={language.name} minRows={16} title={name || ws.lesson.name} />
           {problems.length > 0 && <Alert severity="error">Line {problems[0].line}: {problems[0].message}. Fix it to save.</Alert>}
         </>
       )}

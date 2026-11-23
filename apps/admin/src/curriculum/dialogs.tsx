@@ -33,7 +33,7 @@ function Shell(props: {
   const theme = useTheme();
   const small = useMediaQuery(theme.breakpoints.down('sm'));
   return (
-    <Dialog open={props.open} onClose={props.busy ? undefined : props.onClose} fullWidth maxWidth={props.wide ? 'md' : 'xs'} fullScreen={small && props.wide}>
+    <Dialog open={props.open} onClose={props.busy ? undefined : props.onClose} fullWidth maxWidth={props.wide ? 'lg' : 'xs'} fullScreen={small && props.wide}>
       <DialogTitle sx={{ fontWeight: 700 }}>{props.title}</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
@@ -234,7 +234,7 @@ export function MicroDialog(props: { id?: number; parent: Parent; onClose: () =>
           </Stack>
           {type === 1 ? (
             <>
-              <LatexEditor value={text} onChange={setText} imagesOf={MICRO_LESSON} label="Content (Text)" minRows={6} languageName="this micro lesson" />
+              <LatexEditor phone value={text} onChange={setText} imagesOf={MICRO_LESSON} label="Content (Text)" minRows={14} languageName="this micro lesson" title={name} />
               {problems.length > 0 && <Alert severity="error">Line {problems[0].line}: {problems[0].message}. Fix it to save.</Alert>}
             </>
           ) : (

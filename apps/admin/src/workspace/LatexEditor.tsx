@@ -3,7 +3,7 @@ import FunctionsIcon from '@mui/icons-material/Functions';
 import { Box, Button, Stack, TextField, Typography } from '@mui/material';
 import { useRef, useState } from 'react';
 import { FormulaDialog, insertFormula } from '../latex/FormulaDialog';
-import { InsertDialog } from '../latex/InsertDialog';
+import { InsertDialog, PhonePreview } from '../latex/InsertDialog';
 import { LatexPreview } from '../latex/LatexInput';
 
 /**
@@ -19,6 +19,9 @@ export function LatexEditor(props: {
   languageName?: string;
   readOnly?: boolean;
   minRows?: number;
+  /** Phone preview to the right of the editor instead of a preview above it. */
+  phone?: boolean;
+  title?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [formula, setFormula] = useState(false);
@@ -29,15 +32,8 @@ export function LatexEditor(props: {
     cursor.current = (e.target as HTMLTextAreaElement).selectionStart ?? null;
   };
 
-  return (
-    <Stack spacing={1.25}>
-      {props.value.trim() ? (
-        <LatexPreview latex={props.value} imagesOf={props.imagesOf} />
-      ) : (
-        <Box sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
-          <Typography variant="body2" color="text.secondary">Nothing to preview yet.</Typography>
-        </Box>
-      )}
+  const editorBlock = (
+    <>
       {!props.readOnly && (
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <Button
@@ -61,6 +57,10 @@ export function LatexEditor(props: {
         helperText={'LaTeX. Separate lines with \\\\, words go in \\text{...}.'}
         slotProps={{ htmlInput: { spellCheck: false, style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 14 } } }}
       />
+    </>
+  );
+  const dialogs = (
+    <>
       {open && (
         <InsertDialog
           open={open} onClose={() => setOpen(false)} current={snapshot.current} cursor={snapshot.cursor} imagesOf={props.imagesOf}
@@ -74,6 +74,35 @@ export function LatexEditor(props: {
           onInsert={(f) => { props.onChange(insertFormula(props.value, formulaAt.current, f)); cursor.current = null; setFormula(false); }}
         />
       )}
+    </>
+  );
+
+  if (props.phone) {
+    return (
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) 320px' }, gap: 3, alignItems: 'start' }}>
+        <Stack spacing={1.25} sx={{ minWidth: 0 }}>
+          {editorBlock}
+        </Stack>
+        <Stack spacing={1} alignItems="center" sx={{ position: { md: 'sticky' }, top: { md: 72 } }}>
+          <Typography variant="caption" color="text.secondary">How it shows in the app</Typography>
+          <PhonePreview device="phone" plan={{ before: props.value, after: '' }} addition="" imagesOf={props.imagesOf} title={props.title} />
+        </Stack>
+        {dialogs}
+      </Box>
+    );
+  }
+
+  return (
+    <Stack spacing={1.25}>
+      {props.value.trim() ? (
+        <LatexPreview latex={props.value} imagesOf={props.imagesOf} />
+      ) : (
+        <Box sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
+          <Typography variant="body2" color="text.secondary">Nothing to preview yet.</Typography>
+        </Box>
+      )}
+      {editorBlock}
+      {dialogs}
     </Stack>
   );
 }
