@@ -9,7 +9,7 @@ import {
 } from 'react-admin';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError } from '../api';
-import { ExercisePane } from './ExercisePane';
+import { ExerciseEditor } from './ExerciseEditor';
 import { FilesPane } from './FilesPane';
 import { TextPane } from './TextPane';
 import { TranslateDialog } from './TranslateDialog';
@@ -213,7 +213,8 @@ function WorkspaceBody() {
       </Card>
 
       <ExerciseList ws={ws} record={record} language={language} original={original} isOriginal={isOriginal} canEdit={canEdit}
-        open={sel.kind === 'exercise' ? sel.id : null} onOpen={(id) => go({ item: id ? `exercise-${id}` : 'text' })} onSaved={reload} />
+        open={sel.kind === 'exercise' ? sel.id : null} onOpen={(id) => go({ item: id ? `exercise-${id}` : 'text' })} onSaved={reload}
+        onLanguage={(id) => go({ lang: id })} />
 
       {translateOpen && original && (
         <TranslateDialog
@@ -239,7 +240,7 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
 /** Exercises under the content: one row each with its type, questions and status; Edit opens it below the row. */
 function ExerciseList(props: {
   ws: Workspace; record: Rec; language: Language | null; original: Language | null; isOriginal: boolean; canEdit: boolean;
-  open: number | null; onOpen: (id: number | null) => void; onSaved: () => Promise<void> | void;
+  open: number | null; onOpen: (id: number | null) => void; onSaved: () => Promise<void> | void; onLanguage: (id: number) => void;
 }) {
   const { ws, record, language, isOriginal } = props;
   const statusFor = (id: number) => {
@@ -266,9 +267,15 @@ function ExerciseList(props: {
         const tr = !isOriginal && language ? ws.translations.find((t) => t.itemType === 'exercise' && t.itemId === e.id && t.field === 'name' && t.languageId === language.id) : null;
         const types = [...new Set(e.questions.map((q) => QUESTION_TYPE(q.questionType)))];
         const isOpen = props.open === e.id;
+        if (isOpen) {
+          return (
+            <ExerciseEditor key={e.id} ws={ws} exerciseId={e.id} language={language} original={props.original} isOriginal={isOriginal} canEdit={props.canEdit}
+              onSaved={props.onSaved} onClose={() => props.onOpen(null)} onLanguage={props.onLanguage} />
+          );
+        }
         return (
           <Box key={e.id} sx={{ borderBottom: i < ws.exercises.length - 1 ? 1 : 0, borderColor: 'divider' }}>
-            <Stack direction="row" alignItems="center" spacing={2} sx={{ px: '20px', py: 1.25, bgcolor: isOpen ? 'primary.light' : 'transparent', flexWrap: 'wrap', rowGap: 0.5 }}>
+            <Stack direction="row" alignItems="center" spacing={2} sx={{ px: '20px', py: 1.25, flexWrap: 'wrap', rowGap: 0.5 }}>
               <Typography sx={{ width: 24, color: 'text.secondary', fontSize: 14 }}>{i + 1}.</Typography>
               <Box sx={{ flex: '1 1 220px', minWidth: 0 }}>
                 <Typography sx={{ fontSize: 15, fontWeight: 500 }} noWrap>{tr?.value ?? e.name}</Typography>
@@ -277,15 +284,10 @@ function ExerciseList(props: {
                 </Typography>
               </Box>
               {statusFor(e.id)}
-              <MuiButton size="small" variant={isOpen ? 'contained' : 'outlined'} onClick={() => props.onOpen(isOpen ? null : e.id)}>
-                {isOpen ? 'Close' : props.canEdit ? 'Edit' : 'View'}
+              <MuiButton size="small" variant="outlined" onClick={() => props.onOpen(e.id)}>
+                {props.canEdit ? 'Edit' : 'View'}
               </MuiButton>
             </Stack>
-            {isOpen && (
-              <Box sx={{ px: '20px', py: 2, borderTop: 1, borderColor: 'divider' }}>
-                <ExercisePane ws={ws} exerciseId={e.id} language={language} original={props.original} isOriginal={isOriginal} canEdit={props.canEdit} onSaved={props.onSaved} />
-              </Box>
-            )}
           </Box>
         );
       })}

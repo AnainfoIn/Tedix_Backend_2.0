@@ -263,7 +263,7 @@ export class TranslationsService implements OnModuleInit {
     const questionIds = questions.map((q) => q.id);
     const options = questionIds.length
       ? await this.prisma.$queryRawUnsafe<Row[]>(
-          `SELECT o.id, o.option, o.is_correct, o.sequence_number, g.id AS group_id, g.questionbank_id
+          `SELECT o.id, o.option, o.is_correct, o.sequence_number, g.id AS group_id, g.shape_type, g.questionbank_id
            FROM bx_block_assessmenttest_answer_options o JOIN answer_option_groups g ON g.id = o.answer_option_group_id
            WHERE g.questionbank_id = ANY($1::bigint[]) ORDER BY g.id, o.sequence_number NULLS LAST, o.id`,
           questionIds,
@@ -314,7 +314,7 @@ export class TranslationsService implements OnModuleInit {
               solution: q.solution,
               options: options
                 .filter((o) => Number(o.questionbank_id) === Number(q.id))
-                .map((o) => ({ id: Number(o.id), groupId: Number(o.group_id), option: o.option, isCorrect: !!o.is_correct, sequenceNumber: o.sequence_number })),
+                .map((o) => ({ id: Number(o.id), groupId: Number(o.group_id), option: o.option, isCorrect: !!o.is_correct, sequenceNumber: o.sequence_number, shapeType: o.shape_type ?? null })),
             })),
         })),
         translations,
