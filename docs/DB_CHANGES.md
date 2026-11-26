@@ -19,6 +19,7 @@ Always take a backup first (`pg_dump --format=custom --file=before-<nnn>.dump "$
 | # | Change | Dev | Prod |
 | --- | --- | --- | --- |
 | 001 | Merge questions into exercises | not applied yet | not applied yet |
+| 002 | Exercise translations (multilanguage) | not applied yet | not applied yet |
 
 When a change is applied, write the date in the table above.
 
@@ -110,3 +111,68 @@ question, 10 with two or three, 1 with none), brought up to the current Rails co
 - `down.sql`, then `up.sql` again, both succeed; a third run of `up.sql` is refused
 - 2.0 API e2e tests pass on the old schema and with `TEST_DB_CHANGES=1` (schema plus every
   `db/changes/*/up.sql`), including the exercise editor save and delete
+
+---
+
+## 002 Exercise translations (multilanguage)
+
+Needs 001. Follows the exercise editor design: each exercise is written in one original language,
+and every other language has its own name, question, body, hint, solution and answer options,
+each with a status (auto, edited, reviewed; no value = missing).
+
+**Why.** Until now these translations were rows of the generic `admin_content_translations`
+table (one row per item, field and language, shared with micro lessons and curriculum levels).
+Exercises now get their own typed tables.
+
+**Structure:** same diagram as 001, [db-structure/exercises.mmd](db-structure/exercises.mmd).
+
+### What `up.sql` does
+
+1. Adds `exercises.original_language_id` (the language the exercise is written in; NULL = the
+   same as its micro lesson, which is how the admin works today). Filled from
+   `admin_content_languages` rows of type `exercise`, which are then removed.
+2. Creates `exercise_translations`, one row per exercise and language: `name`, `question`,
+   `question_body`, `hint`, `solution`, plus `status` and `source_hash` as JSON keyed by field
+   (`name`, `question`, `questionBody`, `hint`, `solution`). Deleting the exercise deletes its
+   translations; when an exercise loses its question, the question's translated fields are cleared.
+3. Creates `exercise_option_translations`, one row per answer option and language. Deleting the
+   option deletes its translations.
+4. Moves every `exercise`, `question` and `option` row of `admin_content_translations` into
+   the new tables (question rows land on the exercise that holds that question, including the
+   exercises split by 001), checks the counts, then removes the moved rows. Rows whose exercise,
+   question, option or language no longer exists stay where they are. Micro lesson and
+   curriculum level translations are not touched.
+
+Rails and the student app do not read translations, so nothing changes for them. Running
+`up.sql` twice is refused.
+
+### Order of steps
+
+1. Change 001 is applied.
+2. Backup, then `up.sql`.
+3. Check: open a micro lesson's language tabs in the 2.0 admin; the exercise, question and option
+   translations show as before.
+
+The 2.0 backend picks the new tables up by itself (it checks whether they exist), so the code can be
+deployed before or after this change.
+
+### Undo
+
+`down.sql` copies the rows back into `admin_content_translations` / `admin_content_languages`
+and drops the two tables and the column.
+
+### Things to know
+
+- `updated_by` is kept per exercise and language, not per field.
+- The student app still shows exercises in their original language: serving the translations
+  to the app is a later step of the Node API.
+
+### How it was tested
+
+On the same local copy after 001, with sample translations (names, question fields in two
+languages, an option, plus an orphan row, a row in an unknown language and a micro lesson row):
+the right rows moved (including a question that 001 moved to a split exercise), orphans and micro
+lesson rows stayed, statuses and hashes kept per field; removing a question cleared its fields;
+deleting the exercise removed its row; `down.sql` restored the original rows exactly; `up.sql`
+again worked and a second run was refused. The 2.0 e2e tests save, clear and read back exercise,
+question and option translations on both schemas.

@@ -403,6 +403,30 @@ describeDb('generic admin resources (e2e)', () => {
     expect(resave.status).toBe(200);
     expect((await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT count(*)::int AS n FROM bx_block_assessmenttest_questionbanks WHERE assessment_id = ${sid}`))[0].n).toBe(1);
     expect((await api().put(`/workspace/exercises/${exercise.body.data.id}`, editorBody(Number(saved.qid), []))).status).toBe(400);
+    // Translations of the exercise, its question and an option (own tables after DB change 002).
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO bx_block_language_options_languages (name, language_code, emoji_flag, created_at, updated_at)
+       VALUES ('Romanian', 'RO', 'ro', now(), now()), ('English', 'EN', 'en', now(), now())`,
+    );
+    const [en] = await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT id FROM bx_block_language_options_languages WHERE language_code = 'EN'`);
+    const tr = (itemType: string, itemId: number, field: string, value: string, status?: string) =>
+      api().put('/workspace/translations', { itemType, itemId, field, languageId: Number(en.id), value, status });
+    expect((await tr('exercise', sid, 'name', 'Second (EN)')).status).toBe(200);
+    expect((await tr('question', Number(saved.qid), 'hint', 'Hint EN', 'reviewed')).status).toBe(200);
+    expect((await tr('question', Number(saved.qid), 'question', 'Pick one EN')).status).toBe(200);
+    expect((await tr('option', Number(opts[1].id), 'option', 'B EN')).status).toBe(200);
+    expect((await tr('question', Number(saved.qid), 'question', '')).status).toBe(200);
+    const ws = (await api().get(`/workspace/micro_lessons/${mlId}`)).body.data;
+    const mine = ws.translations
+      .filter((t: any) => t.languageId === Number(en.id))
+      .map((t: any) => `${t.itemType}:${t.field}=${t.value}:${t.status}:${t.outdated}`)
+      .sort();
+    expect(mine).toEqual(['exercise:name=Second (EN):edited:false', 'option:option=B EN:edited:false', 'question:hint=Hint EN:reviewed:false']);
+    if (process.env.TEST_DB_CHANGES) {
+      const rows = await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT name, question, hint, status FROM exercise_translations WHERE exercise_id = ${sid}`);
+      expect(rows).toEqual([{ name: 'Second (EN)', question: null, hint: 'Hint EN', status: { name: 'edited', hint: 'reviewed' } }]);
+    }
+
     if (process.env.TEST_DB_CHANGES) {
       const [row] = await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT name, question FROM exercises WHERE id = ${sid}`);
       expect(row).toEqual({ name: 'Second edited', question: 'Pick one' });

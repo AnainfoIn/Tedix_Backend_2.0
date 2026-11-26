@@ -5,7 +5,11 @@ erDiagram
   exercises ||--o{ bx_block_assessmenttest_variables : "question_id = questionbank_id"
   exercises ||--o{ content_images : "question_id = contentable_id (Questionbank)"
   exercises ||--o{ bx_block_assessmenttest_question_bodies : "question_id = questionbank_id"
-  exercises ||--o{ admin_content_translations : "id (exercise) / question_id (question)"
+  exercises ||--o{ exercise_translations : "exercise_id (change 002)"
+  bx_block_language_options_languages ||--o{ exercise_translations : "language_id"
+  bx_block_assessmenttest_answer_options ||--o{ exercise_option_translations : "option_id (change 002)"
+  bx_block_language_options_languages ||--o{ exercise_option_translations : "language_id"
+  bx_block_language_options_languages |o--o{ exercises : "original_language_id"
   exercises ||--o{ bx_block_assessmenttest_attempted_assessments : "id = assessment_id"
   exercises ||--o{ bx_block_assessmenttest_attempted_questions : "question_id = questionbank_id"
   exercises ||--o{ bx_block_educational_gamification_question_and_answers : "id = assessment_id, question_id = question_bank_id"
@@ -25,6 +29,7 @@ erDiagram
     bigint sub_category_id "shortcut"
     bigint category_id "shortcut"
     bigint country_id "shortcut"
+    bigint original_language_id FK "language it is written in, NULL = micro lesson's (002)"
     bigint question_id UK "old question id, NULL = no question yet"
     int question_type "0 to 13"
     varchar questionbank_type "regular or template"
@@ -77,10 +82,31 @@ erDiagram
     bigint id PK
     int questionbank_id "= exercises.question_id"
   }
-  admin_content_translations {
+  exercise_translations["exercise_translations (one row per exercise + language)"] {
     bigint id PK
-    varchar item_type "exercise, question, option"
-    bigint item_id
+    bigint exercise_id FK "UNIQUE with language_id, cascade delete"
+    bigint language_id FK
+    text name "NULL = missing"
+    text question
+    text question_body
+    text hint
+    text solution
+    jsonb status "per field: auto, edited, reviewed"
+    jsonb source_hash "per field: original text hash, detects outdated"
+    varchar updated_by
+  }
+  exercise_option_translations["exercise_option_translations (one row per option + language)"] {
+    bigint id PK
+    bigint option_id FK "UNIQUE with language_id, cascade delete"
+    bigint language_id FK
+    text option
+    varchar status "auto, edited, reviewed"
+    varchar source_hash
+  }
+  bx_block_language_options_languages["bx_block_language_options_languages (Language)"] {
+    bigint id PK
+    varchar name
+    varchar language_code "RO EN DE HU"
   }
   bx_block_assessmenttest_attempted_assessments {
     bigint id PK
