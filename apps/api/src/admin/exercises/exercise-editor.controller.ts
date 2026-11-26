@@ -9,6 +9,12 @@ import { ExerciseEditorService } from './exercise-editor.service';
 export class ExerciseEditorController {
   constructor(private readonly editor: ExerciseEditorService) {}
 
+  @Put('order')
+  @RequirePermission('manage', 'micro_lessons')
+  reorder(@Body() body: Record<string, any>) {
+    return this.editor.reorder(body ?? {});
+  }
+
   @Put(':id')
   @RequirePermission('manage', 'micro_lessons')
   save(@Param('id') id: string, @Body() body: Record<string, any>) {

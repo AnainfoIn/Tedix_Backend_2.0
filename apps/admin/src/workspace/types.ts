@@ -34,6 +34,8 @@ export interface OptionRow {
 export interface Question {
   id: number;
   questionType: number;
+  /** "template" = the question has variables, so it "Needs fixed values" before students see it. */
+  questionbankType?: string | null;
   question: string | null;
   questionBody: string | null;
   hint: string | null;
@@ -46,6 +48,11 @@ export interface Exercise {
   name: string;
   categoryType: number;
   isAha: boolean | null;
+  /** Order in the micro lesson (DB change 003; null before it). */
+  position?: number | null;
+  /** "Check type" tag: old data whose type needs a check; saving in the editor clears it. */
+  needsReview?: boolean;
+  reviewNote?: string | null;
   questions: Question[];
 }
 
@@ -54,6 +61,8 @@ export interface Workspace {
   languages: Language[];
   originalLanguageId: number | null;
   aiConfigured: boolean;
+  /** Exercises can be reordered (DB change 003 applied). */
+  canReorder?: boolean;
   exercises: Exercise[];
   translations: Translation[];
 }

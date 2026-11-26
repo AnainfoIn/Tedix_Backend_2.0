@@ -431,6 +431,22 @@ describeDb('generic admin resources (e2e)', () => {
       const [row] = await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT name, question FROM exercises WHERE id = ${sid}`);
       expect(row).toEqual({ name: 'Second edited', question: 'Pick one' });
     }
+    // Exercise list order (DB change 003): drag to reorder; refused before the change.
+    const order = await api().put('/workspace/exercises/order', { microLessonId: mlId, ids: [sid, exercise.body.data.id] });
+    if (process.env.TEST_DB_CHANGES) {
+      expect(order.status).toBe(200);
+      const list = (await api().get(`/workspace/micro_lessons/${mlId}`)).body.data;
+      expect(list.canReorder).toBe(true);
+      expect(list.exercises.map((x: any) => [x.id, x.position])).toEqual([[sid, 1], [exercise.body.data.id, 2]]);
+      expect((await api().put('/workspace/exercises/order', { microLessonId: mlId, ids: [sid] })).status).toBe(400);
+      await prisma.$executeRawUnsafe(`UPDATE exercises SET needs_review = true, review_note = 'x' WHERE id = ${sid}`);
+      expect((await api().get(`/workspace/micro_lessons/${mlId}`)).body.data.exercises[0]).toMatchObject({ needsReview: true, reviewNote: 'x' });
+      await api().put(`/workspace/exercises/${sid}`, editorBody(Number(saved.qid), [{ id: Number(grp.id), options: [{ id: Number(opts[1].id), option: 'B!', isCorrect: true, sequenceNumber: null }] }]));
+      expect((await api().get(`/workspace/micro_lessons/${mlId}`)).body.data.exercises[0]).toMatchObject({ needsReview: false, reviewNote: null });
+    } else {
+      expect(order.status).toBe(400);
+      expect((await api().get(`/workspace/micro_lessons/${mlId}`)).body.data.canReorder).toBe(false);
+    }
     expect((await api().del(`/workspace/exercises/${sid}`)).status).toBe(200);
     expect(await prisma.$queryRawUnsafe(`SELECT id FROM bx_block_assessmenttest_assessments WHERE id = ${sid}`)).toEqual([]);
 

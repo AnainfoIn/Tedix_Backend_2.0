@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { hasDbChange } from '../../common/db-changes';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeHtml } from '../records/sanitize';
 
@@ -97,7 +98,10 @@ export class ExerciseEditorService {
     if (taken.length) throw new BadRequestException({ message: 'Name has already been taken for this micro lesson', problems: ['Name has already been taken for this micro lesson'] });
 
     const q = input.question;
+    const ordered = await hasDbChange(this.prisma, 'exerciseOrder');
     await this.prisma.$transaction(async (tx) => {
+      // Saving in the editor is the check the "Check type" tag asks for.
+      if (ordered) await tx.$executeRawUnsafe('UPDATE exercises SET needs_review = false, review_note = NULL WHERE id = $1', exerciseId);
       await tx.$executeRawUnsafe('UPDATE bx_block_assessmenttest_assessments SET name = $1, is_aha = $2, updated_at = now() WHERE id = $3', input.name, input.isAha, exerciseId);
 
       let questionId = q.id;
@@ -169,6 +173,25 @@ export class ExerciseEditorService {
       }
     });
     return { data: { saved: true } };
+  }
+
+  /** Sets the order of a micro lesson's exercises (drag in the exercise list). Needs DB change 003. */
+  async reorder(body: Record<string, any>) {
+    if (!(await hasDbChange(this.prisma, 'exerciseOrder'))) {
+      throw new BadRequestException('Reordering needs database change 003 (see docs/DB_CHANGES.md)');
+    }
+    const microLessonId = Number(body?.microLessonId);
+    const ids: number[] = Array.isArray(body?.ids) ? body.ids.map(Number) : [];
+    if (!Number.isInteger(microLessonId) || !ids.every(Number.isInteger)) throw new BadRequestException('Invalid micro lesson or exercises');
+    const current = (await this.prisma.$queryRawUnsafe<Row[]>('SELECT id FROM exercises WHERE micro_lesson_id = $1', microLessonId)).map((r) => Number(r.id));
+    if (!current.length) throw new NotFoundException('Micro lesson has no exercises');
+    if (ids.length !== current.length || new Set(ids).size !== ids.length || !ids.every((id) => current.includes(id))) {
+      throw new BadRequestException('The list of exercises changed meanwhile. Reload the page and try again.');
+    }
+    await this.prisma.$transaction(
+      ids.map((id, i) => this.prisma.$executeRawUnsafe('UPDATE exercises SET position = $1, updated_at = now() WHERE id = $2', i + 1, id)),
+    );
+    return { data: { ids } };
   }
 
   /** Deletes the exercise with its questions, option groups, options, variables and translations. Refused once students have attempted it. */

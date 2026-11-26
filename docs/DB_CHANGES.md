@@ -20,6 +20,7 @@ Always take a backup first (`pg_dump --format=custom --file=before-<nnn>.dump "$
 | --- | --- | --- | --- |
 | 001 | Merge questions into exercises | not applied yet | not applied yet |
 | 002 | Exercise translations (multilanguage) | not applied yet | not applied yet |
+| 003 | Exercise order and "Check type" flag | not applied yet | not applied yet |
 
 When a change is applied, write the date in the table above.
 
@@ -176,3 +177,48 @@ lesson rows stayed, statuses and hashes kept per field; removing a question clea
 deleting the exercise removed its row; `down.sql` restored the original rows exactly; `up.sql`
 again worked and a second run was refused. The 2.0 e2e tests save, clear and read back exercise,
 question and option translations on both schemas.
+
+---
+
+## 003 Exercise order and "Check type" flag
+
+Needs 001. For the "Micro lesson page: exercise list" design: exercises are dragged into order,
+and old exercises whose type the new editor can only guess carry a "Check type" tag.
+
+### What `up.sql` does
+
+1. Adds `exercises.position`, numbered per micro lesson in today's order (by id), and a trigger
+   that puts a new exercise (from Rails or the admin) at the end of its micro lesson.
+2. Adds `exercises.needs_review` and `exercises.review_note`, and flags:
+   - old MCQ (question type 0) and Challenge (1) exercises: the editor opens them as Multiple
+     Choice, so someone checks whether they are Single or Multiple Choice;
+   - exercises that 001 split out of an exercise with several questions: check the name and type.
+   Saving an exercise in the editor clears the flag.
+
+The old-name views do not show these columns, so Rails and the student app are not affected
+(the app keeps its own order). Running `up.sql` twice is refused.
+
+### Order of steps
+
+After 001 (and 002): backup, then `up.sql`. The 2.0 backend checks whether the columns exist:
+before 003 the list shows exercises by id without drag and without the tag.
+
+### Undo
+
+`down.sql` drops the trigger and the three columns.
+
+### How it was tested
+
+On the local copy: positions 1..n per micro lesson; 313 of 651 exercises flagged (old MCQ /
+Challenge plus the 15 split ones); a Rails-style insert through the view lands at the end with
+no flag; down, up again, and a refused second run. The 2.0 e2e tests reorder, read the flag and
+clear it by saving, with and without the change.
+
+---
+
+## Not a database change: Lego Build
+
+The 12th exercise type of the design (Lego Build Problem) has no question type the student app
+knows, so it stays switched off in the type picker until the app supports it (decided
+2026-11-26). Turning it on later needs a new question type (14) in Rails and the app; no table
+change.

@@ -8,13 +8,14 @@ import {
   DeleteWithConfirmButton, EditButton, Show, TopToolbar, useCanAccess, useNotify, useRecordContext, useSidebarState,
 } from 'react-admin';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ApiError } from '../api';
+import { ApiError, apiFetch } from '../api';
 import { ExerciseEditor } from './ExerciseEditor';
+import { TYPES, typeOf } from './exerciseModel';
 import { FilesPane } from './FilesPane';
 import { TextPane } from './TextPane';
 import { TranslateDialog } from './TranslateDialog';
 import {
-  CATEGORY_LABELS, Language, loadWorkspace, QUESTION_TYPE_LABELS, statusOf, summarize, Tone, TONES, Workspace,
+  Language, loadWorkspace, statusOf, summarize, Tone, TONES, Workspace,
 } from './types';
 
 type Rec = Record<string, any>;
@@ -237,24 +238,79 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** Exercises under the content: one row each with its type, questions and status; Edit opens it below the row. */
+/** Plain text of a question for the one-line preview under the exercise name. */
+const preview = (v: string | null | undefined) =>
+  (v ?? '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+
+const tag = (bg: string, fg: string) => ({ height: 22, fontSize: 11.5, fontWeight: 600, bgcolor: bg, color: fg });
+
+/**
+ * Exercises under the content, as in the "Micro lesson page: exercise list" design: drag to
+ * reorder, #, name with the question, type, tags (AHA, Needs fixed values, Check type),
+ * translations per language, and a type filter. Edit opens the editor in place of the row.
+ */
 function ExerciseList(props: {
   ws: Workspace; record: Rec; language: Language | null; original: Language | null; isOriginal: boolean; canEdit: boolean;
   open: number | null; onOpen: (id: number | null) => void; onSaved: () => Promise<void> | void; onLanguage: (id: number) => void;
 }) {
   const { ws, record, language, isOriginal } = props;
-  const statusFor = (id: number) => {
-    if (isOriginal || !language) return null;
-    const e = ws.exercises.find((x) => x.id === id)!;
+  const notify = useNotify();
+  const [filter, setFilter] = useState<number | 'all'>('all');
+  const [order, setOrder] = useState<number[]>(() => ws.exercises.map((e) => e.id));
+  const [dragId, setDragId] = useState<number | null>(null);
+  useEffect(() => setOrder(ws.exercises.map((e) => e.id)), [ws.exercises]);
+
+  const byId = new Map(ws.exercises.map((e) => [e.id, e]));
+  const exercises = order.map((id) => byId.get(id)).filter((e): e is NonNullable<typeof e> => !!e);
+  const typeOfExercise = (e: (typeof exercises)[number]) => (e.questions[0] ? typeOf(e.questions[0].questionType) : null);
+  const shown = filter === 'all' ? exercises : exercises.filter((e) => typeOfExercise(e)?.n === filter);
+  const toReview = exercises.filter((e) => e.needsReview).length;
+  const canDrag = props.canEdit && !!ws.canReorder && filter === 'all';
+  const others = ws.languages.filter((l) => l.id !== ws.originalLanguageId);
+
+  const translationsOf = (e: (typeof exercises)[number]) => {
     const q = new Set(e.questions.map((x) => x.id));
     const o = new Set(e.questions.flatMap((x) => x.options.map((y) => y.id)));
-    const st = statusOf(summarize(ws, language.id, (t, i) => (t === 'exercise' && i === id) || (t === 'question' && q.has(i)) || (t === 'option' && o.has(i))));
-    return st.label === 'Nothing to translate' ? null : <ToneChip tone={st.tone} label={st.label.replace(' · complete', '')} sx={{ height: 20, fontSize: 11 }} />;
+    return others.map((l) => {
+      const s = summarize(ws, l.id, (t, i) => (t === 'exercise' && i === e.id) || (t === 'question' && q.has(i)) || (t === 'option' && o.has(i)));
+      const st = statusOf(s);
+      const done = s.total > 0 && !s.missing;
+      return { id: l.id, code: shortCode(l), done, title: `${l.name}: ${st.label}` };
+    });
   };
+
+  const drop = async (targetId: number) => {
+    if (dragId == null || dragId === targetId) return setDragId(null);
+    const next = order.filter((id) => id !== dragId);
+    next.splice(next.indexOf(targetId) + (order.indexOf(dragId) < order.indexOf(targetId) ? 1 : 0), 0, dragId);
+    const before = order;
+    setOrder(next);
+    setDragId(null);
+    try {
+      await apiFetch('/workspace/exercises/order', { method: 'PUT', body: JSON.stringify({ microLessonId: record.id, ids: next }) });
+      await props.onSaved();
+    } catch (e) {
+      setOrder(before);
+      notify(e instanceof ApiError ? e.message : 'Could not save the new order', { type: 'error' });
+    }
+  };
+
+  const grid = { display: 'grid', gridTemplateColumns: '20px 32px minmax(200px, 1fr) minmax(150px, 220px) minmax(120px, 210px) minmax(90px, 150px) 72px', columnGap: 1.5, alignItems: 'center' };
+
   return (
     <Card variant="outlined" sx={{ p: 0, overflow: 'hidden' }}>
-      <Stack direction="row" alignItems="center" sx={{ px: '20px', py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
-        <Typography variant="h6" sx={{ fontWeight: 600, flex: 1 }}>Exercises <Box component="span" sx={{ color: 'text.secondary', fontWeight: 400 }}>{ws.exercises.length}</Box></Typography>
+      <Stack direction="row" alignItems="center" spacing={2} sx={{ px: '20px', py: 1.5, borderBottom: 1, borderColor: 'divider', flexWrap: 'wrap', rowGap: 1 }}>
+        <Typography variant="h6" sx={{ fontWeight: 600 }}>Exercises <Box component="span" sx={{ color: 'text.secondary', fontWeight: 400 }}>{ws.exercises.length}</Box></Typography>
+        <Box component="label" sx={{ display: 'flex', alignItems: 'center', gap: 1, fontSize: 14, color: 'text.secondary' }}>
+          Type
+          <Box component="select" aria-label="Filter by type" value={String(filter)} onChange={(ev: React.ChangeEvent<HTMLSelectElement>) => setFilter(ev.target.value === 'all' ? 'all' : Number(ev.target.value))}
+            sx={{ height: 32, borderRadius: '6px', border: '1px solid #C5CAD3', px: 1, font: 'inherit', color: 'text.primary', bgcolor: '#fff' }}>
+            <option value="all">All {TYPES.length} types</option>
+            {TYPES.map((t) => <option key={t.n} value={t.n}>{t.n} · {t.name}</option>)}
+          </Box>
+        </Box>
+        {toReview > 0 && <Chip size="small" label={`${toReview} need${toReview === 1 ? 's' : ''} a type check`} sx={tag('#FFF4E0', '#8A4B00')} />}
+        <Box sx={{ flex: 1 }} />
         {props.canEdit && (
           <MuiButton variant="outlined" size="small" startIcon={<AddIcon />} component={Link}
             to={`/exercises/create?source=${encodeURIComponent(JSON.stringify({ microLessonId: record.id }))}`}>
@@ -263,37 +319,56 @@ function ExerciseList(props: {
         )}
       </Stack>
       {ws.exercises.length === 0 && <Typography variant="body2" color="text.secondary" sx={{ px: '20px', py: 2 }}>No exercises yet.</Typography>}
-      {ws.exercises.map((e, i) => {
-        const tr = !isOriginal && language ? ws.translations.find((t) => t.itemType === 'exercise' && t.itemId === e.id && t.field === 'name' && t.languageId === language.id) : null;
-        const types = [...new Set(e.questions.map((q) => QUESTION_TYPE(q.questionType)))];
-        const isOpen = props.open === e.id;
-        if (isOpen) {
-          return (
-            <ExerciseEditor key={e.id} ws={ws} exerciseId={e.id} language={language} original={props.original} isOriginal={isOriginal} canEdit={props.canEdit}
-              onSaved={props.onSaved} onClose={() => props.onOpen(null)} onLanguage={props.onLanguage} />
-          );
-        }
-        return (
-          <Box key={e.id} sx={{ borderBottom: i < ws.exercises.length - 1 ? 1 : 0, borderColor: 'divider' }}>
-            <Stack direction="row" alignItems="center" spacing={2} sx={{ px: '20px', py: 1.25, flexWrap: 'wrap', rowGap: 0.5 }}>
-              <Typography sx={{ width: 24, color: 'text.secondary', fontSize: 14 }}>{i + 1}.</Typography>
-              <Box sx={{ flex: '1 1 220px', minWidth: 0 }}>
-                <Typography sx={{ fontSize: 15, fontWeight: 500 }} noWrap>{tr?.value ?? e.name}</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {CATEGORY_LABELS[e.categoryType] ?? 'Exercise'}{e.isAha ? ' · AHA' : ''} · {e.questions.length} question{e.questions.length === 1 ? '' : 's'}{types.length ? ` · ${types.join(', ')}` : ''}
-                </Typography>
-              </Box>
-              {statusFor(e.id)}
-              <MuiButton size="small" variant="outlined" onClick={() => props.onOpen(e.id)}>
-                {props.canEdit ? 'Edit' : 'View'}
-              </MuiButton>
-            </Stack>
+      {ws.exercises.length > 0 && (
+        <Box sx={{ overflowX: 'auto' }}>
+          <Box sx={{ ...grid, minWidth: 760, px: '20px', py: 1, borderBottom: 1, borderColor: 'divider', fontSize: 12, fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            <span /><span>#</span><span>Name</span><span>Type</span><span>Tags</span><span>Translations</span><span />
           </Box>
-        );
-      })}
+          {shown.length === 0 && <Typography variant="body2" color="text.secondary" sx={{ px: '20px', py: 2 }}>No exercises of this type.</Typography>}
+          {shown.map((e, i) => {
+            const n = exercises.indexOf(e) + 1;
+            if (props.open === e.id) {
+              return (
+                <ExerciseEditor key={e.id} ws={ws} exerciseId={e.id} language={language} original={props.original} isOriginal={isOriginal} canEdit={props.canEdit}
+                  onSaved={props.onSaved} onClose={() => props.onOpen(null)} onLanguage={props.onLanguage} />
+              );
+            }
+            const tr = !isOriginal && language ? ws.translations.find((t) => t.itemType === 'exercise' && t.itemId === e.id && t.field === 'name' && t.languageId === language.id) : null;
+            const q = e.questions[0];
+            const ty = typeOfExercise(e);
+            const template = e.questions.some((x) => x.questionbankType === 'template');
+            return (
+              <Box key={e.id} draggable={canDrag} onDragStart={() => setDragId(e.id)} onDragEnd={() => setDragId(null)}
+                onDragOver={(ev) => { if (canDrag && dragId != null) ev.preventDefault(); }} onDrop={() => void drop(e.id)}
+                sx={{ ...grid, minWidth: 760, px: '20px', py: 1.25, borderBottom: i < shown.length - 1 ? 1 : 0, borderColor: 'divider', opacity: dragId === e.id ? 0.4 : 1, bgcolor: dragId != null && dragId !== e.id ? '#FAFBFD' : 'transparent' }}>
+                <Box aria-hidden="true" title={canDrag ? 'Drag to reorder' : undefined} sx={{ color: canDrag ? '#8A93A3' : 'transparent', cursor: canDrag ? 'grab' : 'default', userSelect: 'none', fontSize: 14, lineHeight: 1 }}>⋮⋮</Box>
+                <Typography sx={{ color: 'text.secondary', fontSize: 14 }}>{n}.</Typography>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography sx={{ fontSize: 15, fontWeight: 500 }} noWrap>{tr?.value ?? e.name}</Typography>
+                  <Typography variant="caption" color="text.secondary" noWrap component="div">{q ? preview(q.question) || '—' : 'No question yet'}</Typography>
+                </Box>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+                  {ty && <Code>{ty.n}</Code>}
+                  <Typography sx={{ fontSize: 13.5 }} noWrap>{ty ? ty.name : '—'}</Typography>
+                </Stack>
+                <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap">
+                  {e.isAha && <Chip size="small" label="AHA" sx={tag('#E8F0FE', '#174AA6')} />}
+                  {template && <Chip size="small" label="Needs fixed values" sx={tag('#F3E5F5', '#6A1B9A')} />}
+                  {e.needsReview && <Chip size="small" label="Check type" title={e.reviewNote ?? undefined} sx={tag('#FFF4E0', '#8A4B00')} />}
+                </Stack>
+                <Stack direction="row" spacing={1} sx={{ fontSize: 12.5, fontWeight: 600 }}>
+                  {translationsOf(e).map((t) => (
+                    <Box key={t.id} component="span" title={t.title} sx={{ color: t.done ? '#1E6B3A' : '#8A93A3' }}>{t.code} {t.done ? '✓' : '–'}</Box>
+                  ))}
+                </Stack>
+                <MuiButton size="small" variant="outlined" onClick={() => props.onOpen(e.id)}>{props.canEdit ? 'Edit' : 'View'}</MuiButton>
+              </Box>
+            );
+          })}
+        </Box>
+      )}
     </Card>
   );
 }
 
-const QUESTION_TYPE = (t: number) => QUESTION_TYPE_LABELS[t] ?? `Type ${t}`;
 

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { hasDbChange } from '../../common/db-changes';
 import { askClaude, claudeConfigured } from '../latex/claude';
 
 /**
@@ -269,14 +270,18 @@ export class TranslationsService implements OnModuleInit {
     );
     if (!lesson) throw new NotFoundException('Micro lesson not found');
 
+    const ordered = await hasDbChange(this.prisma, 'exerciseOrder');
     const exercises = await this.prisma.$queryRawUnsafe<Row[]>(
-      `SELECT id, name, category_type, is_aha FROM bx_block_assessmenttest_assessments WHERE micro_lesson_id = $1 ORDER BY id`,
+      ordered
+        ? `SELECT id, name, category_type, is_aha, position, needs_review, review_note FROM exercises WHERE micro_lesson_id = $1 ORDER BY position, id`
+        : `SELECT id, name, category_type, is_aha, NULL::int AS position, false AS needs_review, NULL AS review_note
+           FROM bx_block_assessmenttest_assessments WHERE micro_lesson_id = $1 ORDER BY id`,
       microLessonId,
     );
     const exerciseIds = exercises.map((e) => e.id);
     const questions = exerciseIds.length
       ? await this.prisma.$queryRawUnsafe<Row[]>(
-          `SELECT id, assessment_id, question, question_body, hint, solution, question_type FROM bx_block_assessmenttest_questionbanks
+          `SELECT id, assessment_id, question, question_body, hint, solution, question_type, questionbank_type FROM bx_block_assessmenttest_questionbanks
            WHERE assessment_id = ANY($1::bigint[]) ORDER BY id`,
           exerciseIds,
         )
@@ -319,16 +324,21 @@ export class TranslationsService implements OnModuleInit {
         languages,
         originalLanguageId,
         aiConfigured: claudeConfigured(),
+        canReorder: ordered,
         exercises: exercises.map((e) => ({
           id: Number(e.id),
           name: e.name,
           categoryType: e.category_type,
           isAha: e.is_aha,
+          position: e.position == null ? null : Number(e.position),
+          needsReview: !!e.needs_review,
+          reviewNote: e.review_note ?? null,
           questions: questions
             .filter((q) => Number(q.assessment_id) === Number(e.id))
             .map((q) => ({
               id: Number(q.id),
               questionType: q.question_type,
+              questionbankType: q.questionbank_type,
               question: q.question,
               questionBody: q.question_body,
               hint: q.hint,
