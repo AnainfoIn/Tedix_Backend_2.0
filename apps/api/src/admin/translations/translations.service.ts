@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { hasDbChange } from '../../common/db-changes';
 import { askClaude, claudeConfigured } from '../latex/claude';
 
 /**
@@ -45,6 +46,26 @@ const ITEM_SQL: Record<ItemType, { table: string; columns: Record<string, string
 export const ENGLISH_PRIMARY_FROM = Date.parse('2026-11-23T15:45:00Z');
 
 const STATUSES: Status[] = ['auto', 'edited', 'reviewed'];
+
+/** Exercise, question and option translations: own tables once DB change 002 is applied. */
+const isExerciseItem = (type: string): type is 'exercise' | 'question' | 'option' => type === 'exercise' || type === 'question' || type === 'option';
+
+/** Admin field name → exercise_translations column. */
+const EXERCISE_COLUMNS: Record<string, string> = { name: 'name', question: 'question', questionBody: 'question_body', hint: 'hint', solution: 'solution' };
+
+/** Reads translations from the change-002 tables in the same row shape as admin_content_translations. */
+const EXERCISE_TRANSLATIONS_SQL: Record<'exercise' | 'question' | 'option', string> = {
+  exercise: `SELECT 'exercise' AS item_type, t.exercise_id AS item_id, 'name' AS field, t.language_id, t.name AS value,
+                    COALESCE(t.status ->> 'name', 'auto') AS status, t.source_hash ->> 'name' AS source_hash, t.updated_by, t.updated_at
+             FROM exercise_translations t WHERE t.exercise_id = ANY($1::bigint[]) AND t.name IS NOT NULL`,
+  question: `SELECT 'question' AS item_type, e.question_id AS item_id, f.field, t.language_id, f.value,
+                    COALESCE(t.status ->> f.field, 'auto') AS status, t.source_hash ->> f.field AS source_hash, t.updated_by, t.updated_at
+             FROM exercise_translations t JOIN exercises e ON e.id = t.exercise_id
+             CROSS JOIN LATERAL (VALUES ('question', t.question), ('questionBody', t.question_body), ('hint', t.hint), ('solution', t.solution)) f (field, value)
+             WHERE e.question_id = ANY($1::bigint[]) AND f.value IS NOT NULL`,
+  option: `SELECT 'option' AS item_type, option_id AS item_id, 'option' AS field, language_id, option AS value, status, source_hash, updated_by, updated_at
+           FROM exercise_option_translations WHERE option_id = ANY($1::bigint[])`,
+};
 
 export const SCHEMA_SQL = [
   `CREATE TABLE IF NOT EXISTS admin_content_translations (
@@ -102,6 +123,7 @@ Rules:
 export class TranslationsService implements OnModuleInit {
   private readonly logger = new Logger(TranslationsService.name);
   private ready: Promise<boolean> | null = null;
+  private hasExerciseTables = false;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -248,14 +270,18 @@ export class TranslationsService implements OnModuleInit {
     );
     if (!lesson) throw new NotFoundException('Micro lesson not found');
 
+    const ordered = await hasDbChange(this.prisma, 'exerciseOrder');
     const exercises = await this.prisma.$queryRawUnsafe<Row[]>(
-      `SELECT id, name, category_type, is_aha FROM bx_block_assessmenttest_assessments WHERE micro_lesson_id = $1 ORDER BY id`,
+      ordered
+        ? `SELECT id, name, category_type, is_aha, position, needs_review, review_note FROM exercises WHERE micro_lesson_id = $1 ORDER BY position, id`
+        : `SELECT id, name, category_type, is_aha, NULL::int AS position, false AS needs_review, NULL AS review_note
+           FROM bx_block_assessmenttest_assessments WHERE micro_lesson_id = $1 ORDER BY id`,
       microLessonId,
     );
     const exerciseIds = exercises.map((e) => e.id);
     const questions = exerciseIds.length
       ? await this.prisma.$queryRawUnsafe<Row[]>(
-          `SELECT id, assessment_id, question, question_body, hint, solution, question_type FROM bx_block_assessmenttest_questionbanks
+          `SELECT id, assessment_id, question, question_body, hint, solution, question_type, questionbank_type FROM bx_block_assessmenttest_questionbanks
            WHERE assessment_id = ANY($1::bigint[]) ORDER BY id`,
           exerciseIds,
         )
@@ -298,16 +324,21 @@ export class TranslationsService implements OnModuleInit {
         languages,
         originalLanguageId,
         aiConfigured: claudeConfigured(),
+        canReorder: ordered,
         exercises: exercises.map((e) => ({
           id: Number(e.id),
           name: e.name,
           categoryType: e.category_type,
           isAha: e.is_aha,
+          position: e.position == null ? null : Number(e.position),
+          needsReview: !!e.needs_review,
+          reviewNote: e.review_note ?? null,
           questions: questions
             .filter((q) => Number(q.assessment_id) === Number(e.id))
             .map((q) => ({
               id: Number(q.id),
               questionType: q.question_type,
+              questionbankType: q.questionbank_type,
               question: q.question,
               questionBody: q.question_body,
               hint: q.hint,
@@ -327,7 +358,12 @@ export class TranslationsService implements OnModuleInit {
     const byType = new Map<string, number[]>();
     for (const i of items) byType.set(i.type, [...(byType.get(i.type) ?? []), i.id]);
     const rows: Row[] = [];
+    const exerciseTables = await this.exerciseTables();
     for (const [type, ids] of byType) {
+      if (exerciseTables && isExerciseItem(type)) {
+        rows.push(...(await this.prisma.$queryRawUnsafe<Row[]>(EXERCISE_TRANSLATIONS_SQL[type], ids)));
+        continue;
+      }
       rows.push(
         ...(await this.prisma.$queryRawUnsafe<Row[]>(
           `SELECT item_type, item_id, field, language_id, value, status, source_hash, updated_by, updated_at
@@ -364,6 +400,29 @@ export class TranslationsService implements OnModuleInit {
   }
 
   private async upsert(itemType: ItemType, itemId: number, field: string, languageId: number, value: string, status: Status, sourceHash: string, by: string | null) {
+    if (isExerciseItem(itemType) && (await this.exerciseTables())) {
+      if (itemType === 'option') {
+        await this.prisma.$executeRawUnsafe(
+          `INSERT INTO exercise_option_translations (option_id, language_id, option, status, source_hash, updated_by, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, now(), now())
+           ON CONFLICT (option_id, language_id)
+           DO UPDATE SET option = EXCLUDED.option, status = EXCLUDED.status, source_hash = EXCLUDED.source_hash, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+          itemId, languageId, value, status, sourceHash, by,
+        );
+        return;
+      }
+      const column = EXERCISE_COLUMNS[field];
+      const exerciseId = await this.exerciseIdOf(itemType, itemId);
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO exercise_translations (exercise_id, language_id, ${column}, status, source_hash, updated_by, created_at, updated_at)
+         VALUES ($1, $2, $3, jsonb_build_object($4::text, $5::text), jsonb_build_object($4::text, $6::text), $7, now(), now())
+         ON CONFLICT (exercise_id, language_id)
+         DO UPDATE SET ${column} = EXCLUDED.${column}, status = exercise_translations.status || EXCLUDED.status,
+           source_hash = exercise_translations.source_hash || EXCLUDED.source_hash, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+        exerciseId, languageId, value, field, status, sourceHash, by,
+      );
+      return;
+    }
     await this.prisma.$executeRawUnsafe(
       `INSERT INTO admin_content_translations (item_type, item_id, field, language_id, value, status, source_hash, updated_by, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
@@ -380,6 +439,56 @@ export class TranslationsService implements OnModuleInit {
     );
   }
 
+  /**
+   * Whether DB change 002 (exercise_translations, exercise_option_translations) is applied. Until it
+   * is, exercise, question and option translations stay in admin_content_translations like the rest.
+   */
+  private async exerciseTables(): Promise<boolean> {
+    if (this.hasExerciseTables) return true;
+    const [row] = await this.prisma.$queryRawUnsafe<Row[]>(
+      `SELECT to_regclass('exercise_translations') IS NOT NULL AND to_regclass('exercise_option_translations') IS NOT NULL AS ok`,
+    );
+    this.hasExerciseTables = !!row?.ok;
+    return this.hasExerciseTables;
+  }
+
+  /** The exercise row an exercise or question item belongs to (a question's item id is its exercises.question_id). */
+  private async exerciseIdOf(itemType: ItemType, itemId: number): Promise<number> {
+    if (itemType === 'exercise') return itemId;
+    const [row] = await this.prisma.$queryRawUnsafe<Row[]>('SELECT id FROM exercises WHERE question_id = $1', itemId);
+    if (!row) throw new NotFoundException('Item not found');
+    return Number(row.id);
+  }
+
+  private async removeTranslation(itemType: ItemType, itemId: number, field: string, languageId: number) {
+    if (isExerciseItem(itemType) && (await this.exerciseTables())) {
+      if (itemType === 'option') {
+        await this.prisma.$executeRawUnsafe('DELETE FROM exercise_option_translations WHERE option_id = $1 AND language_id = $2', itemId, languageId);
+        return;
+      }
+      const column = EXERCISE_COLUMNS[field];
+      const exerciseId = await this.exerciseIdOf(itemType, itemId);
+      await this.prisma.$executeRawUnsafe(
+        `UPDATE exercise_translations SET ${column} = NULL, status = status - $3::text, source_hash = source_hash - $3::text, updated_at = now()
+         WHERE exercise_id = $1 AND language_id = $2`,
+        exerciseId, languageId, field,
+      );
+      await this.prisma.$executeRawUnsafe(
+        `DELETE FROM exercise_translations WHERE exercise_id = $1 AND language_id = $2
+           AND name IS NULL AND question IS NULL AND question_body IS NULL AND hint IS NULL AND solution IS NULL`,
+        exerciseId, languageId,
+      );
+      return;
+    }
+    await this.prisma.$executeRawUnsafe(
+      `DELETE FROM admin_content_translations WHERE item_type = $1 AND item_id = $2 AND field = $3 AND language_id = $4`,
+      itemType,
+      itemId,
+      field,
+      languageId,
+    );
+  }
+
   /** An admin's own wording for one field in one language (status "edited", or "reviewed" when only approved). */
   async save(input: { itemType?: unknown; itemId?: unknown; field?: unknown; languageId?: unknown; value?: unknown; status?: unknown }, by: string | null) {
     await this.ensureReady();
@@ -391,13 +500,7 @@ export class TranslationsService implements OnModuleInit {
     const value = typeof input.value === 'string' ? input.value.trim() : '';
     const field = String(input.field);
     if (!value) {
-      await this.prisma.$executeRawUnsafe(
-        `DELETE FROM admin_content_translations WHERE item_type = $1 AND item_id = $2 AND field = $3 AND language_id = $4`,
-        itemType,
-        itemId,
-        field,
-        languageId,
-      );
+      await this.removeTranslation(itemType, itemId, field, languageId);
       return { data: { deleted: true } };
     }
     const status = STATUSES.includes(input.status as Status) ? (input.status as Status) : 'edited';

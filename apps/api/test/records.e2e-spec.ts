@@ -6,13 +6,51 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaClient } from '@prisma/client';
-import { readFileSync } from 'fs';
+import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { setupApp } from '../src/setup-app';
 
 const DB = process.env.TEST_DATABASE_URL;
+
+/** Runs every db/changes/<nnn>/up.sql in order, one statement at a time (Prisma runs one per call). */
+async function applyDbChanges(prisma: PrismaClient) {
+  const dir = join(__dirname, '..', '..', '..', 'db', 'changes');
+  for (const change of readdirSync(dir).filter((d) => /^\d{3}-/.test(d)).sort()) {
+    const statements = splitSql(readFileSync(join(dir, change, 'up.sql'), 'utf8')).filter((st) => !/^(BEGIN|COMMIT|SET LOCAL\b)/i.test(st));
+    await prisma.$transaction(statements.map((st) => prisma.$executeRawUnsafe(st)));
+  }
+}
+
+/** Splits a SQL script on top-level semicolons, skipping -- comments, quotes and $tag$ bodies. */
+function splitSql(sql: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  for (let i = 0; i < sql.length; ) {
+    const rest = sql.slice(i);
+    const dollar = /^\$[A-Za-z_]*\$/.exec(rest);
+    if (rest.startsWith('--')) {
+      i = sql.indexOf('\n', i) === -1 ? sql.length : sql.indexOf('\n', i);
+    } else if (dollar) {
+      const close = sql.indexOf(dollar[0], i + dollar[0].length) + dollar[0].length;
+      cur += sql.slice(i, close);
+      i = close;
+    } else if (sql[i] === "'") {
+      const close = sql.indexOf("'", i + 1) + 1;
+      cur += sql.slice(i, close);
+      i = close;
+    } else if (sql[i] === ';') {
+      if (cur.trim()) out.push(cur.trim());
+      cur = '';
+      i++;
+    } else {
+      cur += sql[i++];
+    }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
 const describeDb = DB ? describe : describe.skip;
 const DEVISE_HASH = '$2a$04$aEX3E3SpgSkH/LW7CJH.puiX6W7gGQNNJ0Z3i/qm49cfgsfih/mUO'; // "secret123"
 
@@ -32,6 +70,8 @@ describeDb('generic admin resources (e2e)', () => {
     for (const statement of ddl.replace(/^--.*$/gm, '').split(/;\s*\n/).map((s) => s.trim()).filter(Boolean)) {
       await prisma.$executeRawUnsafe(statement);
     }
+    // TEST_DB_CHANGES=1 also applies db/changes/*/up.sql, to check the app on the changed schema.
+    if (process.env.TEST_DB_CHANGES) await applyDbChanges(prisma);
     await prisma.$executeRawUnsafe(
       `INSERT INTO roles (name, created_at, updated_at) VALUES ('Admin', now(), now()), ('sub_admin', now(), now()), ('Editor', now(), now())`,
     );
@@ -341,6 +381,74 @@ describeDb('generic admin resources (e2e)', () => {
     expect(image.body.data).toMatchObject({ contentableType: 'BxBlockProfile::MicroSummary', summaryOfMicroLessonId: mlId, parentPath: `micro_lessons/${mlId}`, attrName: 'Description' });
     expect((await api().get(`/content_images?contentableType=BxBlockProfile::MicroSummary&summaryOfMicroLessonId=${mlId}`)).body.total).toBe(1);
     expect((await api().post('/content_images', { keyName: 'orphan' })).body.errors.base).toEqual(['Add content images from a micro lesson or question bank page']);
+
+    // The exercise editor: one exercise with its question, groups and options, saved and deleted in one go.
+    const second = await api().post('/exercises', { microLessonId: mlId, name: 'Second', categoryType: 0 });
+    const editorBody = (questionId: number | null, groups: object[]) => ({
+      name: 'Second edited', isAha: true,
+      question: { id: questionId, questionType: 0, question: 'Pick one', questionBody: null, hint: 'h', solution: 's', groups },
+    });
+    const sid = second.body.data.id;
+    expect((await api().put(`/workspace/exercises/${sid}`, editorBody(null, [{ options: [{ option: 'A', isCorrect: true, sequenceNumber: null }, { option: 'B', isCorrect: false, sequenceNumber: null }] }]))).status).toBe(200);
+    const [saved] = await prisma.$queryRawUnsafe<Record<string, any>[]>(
+      `SELECT a.name, a.is_aha, q.id AS qid, q.hint FROM bx_block_assessmenttest_assessments a JOIN bx_block_assessmenttest_questionbanks q ON q.assessment_id = a.id WHERE a.id = ${sid}`,
+    );
+    expect(saved).toMatchObject({ name: 'Second edited', is_aha: true, hint: 'h' });
+    const opts = await prisma.$queryRawUnsafe<Record<string, any>[]>(
+      `SELECT o.id, o.option FROM bx_block_assessmenttest_answer_options o JOIN answer_option_groups g ON g.id = o.answer_option_group_id WHERE g.questionbank_id = ${saved.qid} ORDER BY o.id`,
+    );
+    expect(opts.map((o) => o.option)).toEqual(['A', 'B']);
+    const [grp] = await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT id FROM answer_option_groups WHERE questionbank_id = ${saved.qid}`);
+    const resave = await api().put(`/workspace/exercises/${sid}`, editorBody(Number(saved.qid), [{ id: Number(grp.id), options: [{ id: Number(opts[1].id), option: 'B!', isCorrect: true, sequenceNumber: null }] }]));
+    expect(resave.status).toBe(200);
+    expect((await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT count(*)::int AS n FROM bx_block_assessmenttest_questionbanks WHERE assessment_id = ${sid}`))[0].n).toBe(1);
+    expect((await api().put(`/workspace/exercises/${exercise.body.data.id}`, editorBody(Number(saved.qid), []))).status).toBe(400);
+    // Translations of the exercise, its question and an option (own tables after DB change 002).
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO bx_block_language_options_languages (name, language_code, emoji_flag, created_at, updated_at)
+       VALUES ('Romanian', 'RO', 'ro', now(), now()), ('English', 'EN', 'en', now(), now())`,
+    );
+    const [en] = await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT id FROM bx_block_language_options_languages WHERE language_code = 'EN'`);
+    const tr = (itemType: string, itemId: number, field: string, value: string, status?: string) =>
+      api().put('/workspace/translations', { itemType, itemId, field, languageId: Number(en.id), value, status });
+    expect((await tr('exercise', sid, 'name', 'Second (EN)')).status).toBe(200);
+    expect((await tr('question', Number(saved.qid), 'hint', 'Hint EN', 'reviewed')).status).toBe(200);
+    expect((await tr('question', Number(saved.qid), 'question', 'Pick one EN')).status).toBe(200);
+    expect((await tr('option', Number(opts[1].id), 'option', 'B EN')).status).toBe(200);
+    expect((await tr('question', Number(saved.qid), 'question', '')).status).toBe(200);
+    const ws = (await api().get(`/workspace/micro_lessons/${mlId}`)).body.data;
+    const mine = ws.translations
+      .filter((t: any) => t.languageId === Number(en.id))
+      .map((t: any) => `${t.itemType}:${t.field}=${t.value}:${t.status}:${t.outdated}`)
+      .sort();
+    expect(mine).toEqual(['exercise:name=Second (EN):edited:false', 'option:option=B EN:edited:false', 'question:hint=Hint EN:reviewed:false']);
+    if (process.env.TEST_DB_CHANGES) {
+      const rows = await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT name, question, hint, status FROM exercise_translations WHERE exercise_id = ${sid}`);
+      expect(rows).toEqual([{ name: 'Second (EN)', question: null, hint: 'Hint EN', status: { name: 'edited', hint: 'reviewed' } }]);
+    }
+
+    if (process.env.TEST_DB_CHANGES) {
+      const [row] = await prisma.$queryRawUnsafe<Record<string, any>[]>(`SELECT name, question FROM exercises WHERE id = ${sid}`);
+      expect(row).toEqual({ name: 'Second edited', question: 'Pick one' });
+    }
+    // Exercise list order (DB change 003): drag to reorder; refused before the change.
+    const order = await api().put('/workspace/exercises/order', { microLessonId: mlId, ids: [sid, exercise.body.data.id] });
+    if (process.env.TEST_DB_CHANGES) {
+      expect(order.status).toBe(200);
+      const list = (await api().get(`/workspace/micro_lessons/${mlId}`)).body.data;
+      expect(list.canReorder).toBe(true);
+      expect(list.exercises.map((x: any) => [x.id, x.position])).toEqual([[sid, 1], [exercise.body.data.id, 2]]);
+      expect((await api().put('/workspace/exercises/order', { microLessonId: mlId, ids: [sid] })).status).toBe(400);
+      await prisma.$executeRawUnsafe(`UPDATE exercises SET needs_review = true, review_note = 'x' WHERE id = ${sid}`);
+      expect((await api().get(`/workspace/micro_lessons/${mlId}`)).body.data.exercises[0]).toMatchObject({ needsReview: true, reviewNote: 'x' });
+      await api().put(`/workspace/exercises/${sid}`, editorBody(Number(saved.qid), [{ id: Number(grp.id), options: [{ id: Number(opts[1].id), option: 'B!', isCorrect: true, sequenceNumber: null }] }]));
+      expect((await api().get(`/workspace/micro_lessons/${mlId}`)).body.data.exercises[0]).toMatchObject({ needsReview: false, reviewNote: null });
+    } else {
+      expect(order.status).toBe(400);
+      expect((await api().get(`/workspace/micro_lessons/${mlId}`)).body.data.canReorder).toBe(false);
+    }
+    expect((await api().del(`/workspace/exercises/${sid}`)).status).toBe(200);
+    expect(await prisma.$queryRawUnsafe(`SELECT id FROM bx_block_assessmenttest_assessments WHERE id = ${sid}`)).toEqual([]);
 
     expect((await api().del(`/exercises/${exercise.body.data.id}`)).body.message).toBe('Cannot delete record because dependent questionbanks exist');
     expect((await api().del(`/micro_lessons/${mlId}`)).body.message).toBe('Cannot delete record because dependent assessments exist');
