@@ -5,6 +5,9 @@ import { sanitizeHtml } from '../records/sanitize';
 
 type Row = Record<string, any>;
 
+/** Columns an exercise copies from its micro lesson (as Rails' set_hierarchy_from_micro_lesson). */
+const HIERARCHY = ['country_id', 'category_id', 'sub_category_id', 'course_id', 'main_id', 'unit_id', 'lesson_id'];
+
 /** Legacy question types (bx_block_assessmenttest_questionbanks.question_type) the editor can save. */
 export const QUESTION_TYPES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 export const SHAPE_TYPES = ['square_with_center', 'square_with_cross', 'triangle', 'triangle_with_center', 'pentagon_with_center', 'asterisk'];
@@ -173,6 +176,41 @@ export class ExerciseEditorService {
       }
     });
     return { data: { saved: true } };
+  }
+
+  /**
+   * "Add exercise" on the micro lesson page (design board 2): creates the exercise with its name and
+   * AHA flag, at the end of the micro lesson. Its question is added by the first save in the editor,
+   * which opens with the type picked in the dialog.
+   */
+  async create(body: Record<string, any>) {
+    const microLessonId = Number(body?.microLessonId);
+    if (!Number.isInteger(microLessonId) || microLessonId <= 0) throw new BadRequestException('Invalid micro lesson');
+    const name = text(body?.name).replace(/\s+/g, ' ');
+    const problems: string[] = [];
+    if (name.length < 2) problems.push('Name needs at least 2 characters');
+    if (name.length > 100) problems.push('Name can have at most 100 characters');
+    if (problems.length) throw new BadRequestException({ message: problems.join('. '), problems });
+    const [ml] = await this.prisma.$queryRawUnsafe<Row[]>(
+      `SELECT ${HIERARCHY.join(', ')} FROM bx_block_profile_micro_lessons WHERE id = $1`,
+      microLessonId,
+    );
+    if (!ml) throw new NotFoundException('Micro lesson not found');
+    const taken = await this.prisma.$queryRawUnsafe<Row[]>(
+      'SELECT 1 FROM bx_block_assessmenttest_assessments WHERE micro_lesson_id = $1 AND lower(name) = lower($2) LIMIT 1',
+      microLessonId,
+      name,
+    );
+    if (taken.length) throw new BadRequestException({ message: 'Name has already been taken for this micro lesson', problems: ['Name has already been taken for this micro lesson'] });
+    const [row] = await this.prisma.$queryRawUnsafe<Row[]>(
+      `INSERT INTO bx_block_assessmenttest_assessments (micro_lesson_id, name, category_type, is_aha, ${HIERARCHY.join(', ')}, created_at, updated_at)
+       VALUES ($1, $2, 0, $3, ${HIERARCHY.map((_, i) => `$${i + 4}`).join(', ')}, now(), now()) RETURNING id`,
+      microLessonId,
+      name,
+      !!body?.isAha,
+      ...HIERARCHY.map((c) => ml[c] ?? null),
+    );
+    return { data: { id: Number(row.id), name } };
   }
 
   /** Sets the order of a micro lesson's exercises (drag in the exercise list). Needs DB change 003. */

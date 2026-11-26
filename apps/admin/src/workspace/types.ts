@@ -90,6 +90,9 @@ export const saveTranslation = (body: { itemType: ItemType; itemId: number; fiel
 export const saveExercise = (id: number, body: unknown) =>
   apiFetch<{ data: { saved: boolean } }>(`/workspace/exercises/${id}`, { method: 'PUT', body: JSON.stringify(body) });
 
+export const createExercise = (body: { microLessonId: number; name: string; isAha: boolean }) =>
+  apiFetch<{ data: { id: number; name: string } }>('/workspace/exercises', { method: 'POST', body: JSON.stringify(body) });
+
 export const deleteExercise = (id: number) => apiFetch(`/workspace/exercises/${id}`, { method: 'DELETE' });
 
 export const setOriginalLanguage = (id: number, languageId: number) =>

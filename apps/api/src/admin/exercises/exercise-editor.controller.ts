@@ -1,4 +1,4 @@
-import { Body, Delete, Param, Put } from '@nestjs/common';
+import { Body, Delete, Param, Post, Put } from '@nestjs/common';
 import { parseId } from '../../common/list-query';
 import { AdminController } from '../admin-controller.decorator';
 import { RequirePermission } from '../ability/require-permission.decorator';
@@ -8,6 +8,12 @@ import { ExerciseEditorService } from './exercise-editor.service';
 @AdminController('workspace/exercises')
 export class ExerciseEditorController {
   constructor(private readonly editor: ExerciseEditorService) {}
+
+  @Post()
+  @RequirePermission('manage', 'micro_lessons')
+  create(@Body() body: Record<string, any>) {
+    return this.editor.create(body ?? {});
+  }
 
   @Put('order')
   @RequirePermission('manage', 'micro_lessons')
