@@ -28,6 +28,7 @@ export interface OptionRow {
   option: string;
   isCorrect: boolean;
   sequenceNumber: number | null;
+  shapeType?: string | null;
 }
 
 export interface Question {
@@ -75,6 +76,12 @@ export const loadWorkspace = (id: number | string) => apiFetch<{ data: Workspace
 
 export const saveTranslation = (body: { itemType: ItemType; itemId: number; field: string; languageId: number; value: string; status?: Status }) =>
   apiFetch('/workspace/translations', { method: 'PUT', body: JSON.stringify(body) });
+
+/** Saves an exercise in its original language: name, AHA, its question and the answer groups and options. */
+export const saveExercise = (id: number, body: unknown) =>
+  apiFetch<{ data: { saved: boolean } }>(`/workspace/exercises/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+
+export const deleteExercise = (id: number) => apiFetch(`/workspace/exercises/${id}`, { method: 'DELETE' });
 
 export const setOriginalLanguage = (id: number, languageId: number) =>
   apiFetch<{ data: Workspace }>(`/workspace/micro_lessons/${id}/original_language`, { method: 'PUT', body: JSON.stringify({ languageId }) }).then((r) => r.data);
