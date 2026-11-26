@@ -18,11 +18,16 @@ Always take a backup first (`pg_dump --format=custom --file=before-<nnn>.dump "$
 
 | # | Change | Dev | Prod |
 | --- | --- | --- | --- |
-| 001 | Merge questions into exercises | not applied yet | not applied yet |
-| 002 | Exercise translations (multilanguage) | not applied yet | not applied yet |
-| 003 | Exercise order and "Check type" flag | not applied yet | not applied yet |
+| 001 | Merge questions into exercises | 2026-11-26 (660 → 701 exercises, 21 split) | not applied yet |
+| 002 | Exercise translations (multilanguage) | 2026-11-26 (15 name, 51 question, 72 option translations moved) | not applied yet |
+| 003 | Exercise order and "Check type" flag | 2026-11-26 (346 flagged) | not applied yet |
 
 When a change is applied, write the date in the table above.
+
+Dev was changed before the planned prod-to-dev data copy. If dev is ever restored from a prod dump
+(`pg_restore --clean`), restore it into an empty database or undo 003, 002, 001 first, then run
+001-003 again. Backup taken right before: `tedix-dev-before-001-20261126-1955.dump` (on the
+project Mac, Tedix_DB_Backups).
 
 ---
 
