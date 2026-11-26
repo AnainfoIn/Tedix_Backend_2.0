@@ -1,6 +1,8 @@
 import InsightsIcon from '@mui/icons-material/Insights';
 import { ANALYTICS_PAGES } from './analytics/AnalyticsPage';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
+import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
+import { Typography } from '@mui/material';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import { Collapse, List, ListItemButton, ListItemText } from '@mui/material';
@@ -20,8 +22,7 @@ function menuEntries(): Map<string, Entry[]> {
   const add = (group: string, entry: Entry) => (groups.get(group) ?? groups.set(group, []).get(group)!).push(entry);
   add('User Management', { resource: 'roles', priority: 1 });
   add('User Management', { resource: 'admin_users', priority: 2 });
-  add('Contents', { route: '/contents', label: 'Contents tree', icon: <AccountTreeIcon />, permission: 'contents', priority: 0 });
-  LEVEL_ORDER.forEach((key, i) => add('Contents', { resource: key, priority: i + 1 }));
+    LEVEL_ORDER.forEach((key, i) => add('Contents', { resource: key, priority: i + 1 }));
   add('Notifications', { resource: 'notifications', priority: 1 });
   ANALYTICS_PAGES.forEach((p, i) =>
     add('Analytics', { route: `/analytics/${p.key}`, label: p.label, icon: <InsightsIcon />, permission: 'analytics', priority: i + 1 }),
@@ -32,6 +33,8 @@ function menuEntries(): Map<string, Entry[]> {
 }
 
 const ENTRIES = menuEntries();
+/** Only Curriculum and Micro lessons are shown for now; the other pages still open by their links. */
+const SHOW_OTHER_MENUS = false;
 const OPEN_KEY = 'tedix_admin_menu_open';
 
 function readOpen(): Record<string, boolean> {
@@ -59,8 +62,8 @@ function Group({ name, entries, open, onToggle }: { name: string; entries: Entry
   if (!sidebarOpen) return <>{items}</>;
   return (
     <>
-      <ListItemButton onClick={onToggle} dense sx={{ pl: 2, color: 'text.secondary' }}>
-        <ListItemText primary={name} primaryTypographyProps={{ variant: 'overline', lineHeight: 1.6 }} />
+      <ListItemButton onClick={onToggle} dense sx={{ mx: 1.25, px: 1.5, borderRadius: 2, color: 'text.primary' }}>
+        <ListItemText primary={name} primaryTypographyProps={{ fontSize: 14 }} />
         {open ? <ExpandLess fontSize="small" /> : <ExpandMore fontSize="small" />}
       </ListItemButton>
       <Collapse in={open} timeout="auto">
@@ -87,10 +90,40 @@ export function AppMenu() {
   };
   return (
     <Menu>
-      <Menu.DashboardItem />
-      {[...ENTRIES].filter(([, entries]) => entries.length).map(([name, entries]) => (
-        <Group key={name} name={name} entries={entries} open={open[name] ?? name === activeGroup} onToggle={() => toggle(name)} />
-      ))}
+      <PinnedSection title="Contents">
+        <RouteItem entry={{ route: '/curriculum', label: 'Curriculum', icon: <MenuBookOutlinedIcon />, permission: 'lessons', priority: 0 }} />
+        <RouteItem entry={{ route: '/micro-lessons', label: 'Micro lessons', icon: <ArticleOutlinedIcon />, permission: 'micro_lessons', priority: 1 }} />
+        <CurriculumNote />
+      </PinnedSection>
+      {SHOW_OTHER_MENUS && (
+        <PinnedSection title="More">
+          {[...ENTRIES].filter(([, entries]) => entries.length).map(([name, entries]) => (
+            <Group key={name} name={name} entries={entries} open={open[name] ?? name === activeGroup} onToggle={() => toggle(name)} />
+          ))}
+        </PinnedSection>
+      )}
     </Menu>
+  );
+}
+
+function CurriculumNote() {
+  const [sidebarOpen] = useSidebarState();
+  if (!sidebarOpen) return null;
+  return (
+    <Typography sx={{ px: 2.5, pb: 1, fontSize: 12, color: 'text.secondary', lineHeight: 1.5 }}>
+      Grade → Micro Lesson. Exercises, questions and options are managed inside each micro lesson.
+    </Typography>
+  );
+}
+
+function PinnedSection({ title, children }: { title: string; children: ReactNode }) {
+  const [sidebarOpen] = useSidebarState();
+  return (
+    <>
+      {sidebarOpen && (
+        <Typography color="text.secondary" sx={{ px: 2.5, pt: 1.75, pb: 0.75, display: 'block', fontSize: 11, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase' }}>{title}</Typography>
+      )}
+      {children}
+    </>
   );
 }

@@ -54,7 +54,7 @@ const STRUCTURES: Array<[RegExp, string]> = [
 
 const MATH_TOKEN = /^(?:\d+(?:[.,]\d+)*(?:[a-zA-Z]|\\?%)?|[-+=<>()[\]^_{}|!]+|\\[a-zA-Z]+.*|.*[\\^_{}].*|[a-zA-Z](?:\^.*)?)$/;
 /** Single letters that are almost always words, not variables. */
-const WORD_LETTERS = new Set(['a', 'A', 'I']);
+const WORD_LETTERS = new Set(['a', 'A', 'I', 'o', 'O']); // o: Romanian "a/one"
 const OPERATOR = /^(?:[-+=<>]|\\(?:times|div|pm|leq|geq|neq|approx))$/;
 
 const escapeText = (s: string) => s.replace(/([#$%&_{}])/g, '\\$1').replace(/\\(?![#$%&_{}])/g, '\\textbackslash ');
