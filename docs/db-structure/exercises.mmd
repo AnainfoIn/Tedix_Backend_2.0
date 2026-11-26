@@ -1,0 +1,100 @@
+erDiagram
+  bx_block_profile_micro_lessons ||--o{ exercises : "micro_lesson_id"
+  exercises ||--o{ answer_option_groups : "question_id = questionbank_id"
+  answer_option_groups ||--o{ bx_block_assessmenttest_answer_options : "answer_option_group_id"
+  exercises ||--o{ bx_block_assessmenttest_variables : "question_id = questionbank_id"
+  exercises ||--o{ content_images : "question_id = contentable_id (Questionbank)"
+  exercises ||--o{ bx_block_assessmenttest_question_bodies : "question_id = questionbank_id"
+  exercises ||--o{ admin_content_translations : "id (exercise) / question_id (question)"
+  exercises ||--o{ bx_block_assessmenttest_attempted_assessments : "id = assessment_id"
+  exercises ||--o{ bx_block_assessmenttest_attempted_questions : "question_id = questionbank_id"
+  exercises ||--o{ bx_block_educational_gamification_question_and_answers : "id = assessment_id, question_id = question_bank_id"
+  exercises ||--|| bx_block_assessmenttest_assessments : "view: exercise columns"
+  exercises ||--o| bx_block_assessmenttest_questionbanks : "view: question columns"
+
+  exercises["exercises (one row per exercise, holds its question)"] {
+    bigint id PK "old exercise id"
+    bigint micro_lesson_id FK "NOT NULL"
+    varchar name "NOT NULL, unique per micro lesson"
+    int category_type "exercise, challenge, both"
+    boolean is_aha
+    bigint lesson_id "shortcut"
+    bigint unit_id "shortcut"
+    bigint main_id "shortcut"
+    bigint course_id "shortcut"
+    bigint sub_category_id "shortcut"
+    bigint category_id "shortcut"
+    bigint country_id "shortcut"
+    bigint question_id UK "old question id, NULL = no question yet"
+    int question_type "0 to 13"
+    varchar questionbank_type "regular or template"
+    varchar question
+    varchar question_body
+    varchar hint
+    varchar solution
+    timestamp question_created_at
+    timestamp question_updated_at
+    timestamp created_at
+    timestamp updated_at
+  }
+  bx_block_assessmenttest_assessments["bx_block_assessmenttest_assessments (VIEW, for Rails)"] {
+    bigint id "= exercises.id"
+    varchar name
+    bigint micro_lesson_id
+    boolean is_aha
+  }
+  bx_block_assessmenttest_questionbanks["bx_block_assessmenttest_questionbanks (VIEW, for Rails)"] {
+    bigint id "= exercises.question_id"
+    bigint assessment_id "= exercises.id"
+    varchar question
+    int question_type
+  }
+  answer_option_groups {
+    bigint id PK
+    bigint questionbank_id FK "= exercises.question_id"
+    varchar shape_type
+  }
+  bx_block_assessmenttest_answer_options {
+    bigint id PK
+    bigint answer_option_group_id FK
+    varchar option
+    boolean is_correct
+    int sequence_number
+  }
+  bx_block_assessmenttest_variables {
+    bigint id PK
+    bigint questionbank_id FK "= exercises.question_id"
+    varchar name
+    varchar formula
+  }
+  content_images {
+    bigint id PK
+    varchar contentable_type "BxBlockAssessmenttest::Questionbank"
+    bigint contentable_id "= exercises.question_id"
+    varchar key_name
+  }
+  bx_block_assessmenttest_question_bodies {
+    bigint id PK
+    int questionbank_id "= exercises.question_id"
+  }
+  admin_content_translations {
+    bigint id PK
+    varchar item_type "exercise, question, option"
+    bigint item_id
+  }
+  bx_block_assessmenttest_attempted_assessments {
+    bigint id PK
+    int assessment_id "= exercises.id"
+  }
+  bx_block_assessmenttest_attempted_questions {
+    bigint id PK
+    int questionbank_id "= exercises.question_id"
+  }
+  bx_block_educational_gamification_question_and_answers {
+    bigint id PK
+    int assessment_id "= exercises.id"
+    int question_bank_id "= exercises.question_id"
+  }
+  bx_block_profile_micro_lessons {
+    bigint id PK
+  }
