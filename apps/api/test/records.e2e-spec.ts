@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import request from 'supertest';
+import { ExerciseWriter } from '../src/generate-question/exercise-writer';
 import { AppModule } from '../src/app.module';
 import { setupApp } from '../src/setup-app';
 
@@ -81,7 +82,21 @@ describeDb('generic admin resources (e2e)', () => {
          SELECT '${email}', '${DEVISE_HASH}', id, now(), now() FROM roles WHERE name = '${role}'`,
       );
     }
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    // Pasted questions are read by Claude in production; here a fake answers like Claude would.
+    const writer = {
+      read: async (type: number, text: string) => {
+        if (text.includes('fail')) return { exercises: [], skipped: [{ text, reason: 'not a question' }] };
+        return {
+          exercises: [
+            { question: '\\text{Cat face 7 · 8?}', hint: '\\text{Tabla inmultirii}', solution: '7 · 8 = 56', options: ['54', '56', '58'], correct: 1 },
+            { question: '\\text{Capitala Frantei?}', hint: '', solution: 'Paris', options: ['Paris', 'Lyon'], correct: 0 },
+          ],
+          skipped: [{ text: 'Salut', reason: 'Not a question' }],
+          type,
+        };
+      },
+    };
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).overrideProvider(ExerciseWriter).useValue(writer).compile();
     app = moduleRef.createNestApplication();
     setupApp(app, { serveAdmin: false });
     await app.init();
@@ -568,6 +583,35 @@ describeDb('generic admin resources (e2e)', () => {
       expect((await api().get(`/workspace/micro_lessons/${other}/quiz`)).body.data.exercises).toEqual([]);
     }
     expect((await api().del(`/micro_lessons/${other}`)).status).toBe(200);
+    // Paste questions in "Add an exercise": arithmetic lines become templates (Part A), the rest is read by Claude.
+    const imp = '/workspace/question-templates/import';
+    expect((await api('viewer').post(`${imp}/preview`, { type: 2, text: '2+3=5' })).status).toBe(403);
+    expect((await api().post(`${imp}/preview`, { type: 9, text: '2+3=5' })).status).toBe(400);
+    expect((await api().post(`${imp}/preview`, { type: 2, text: '  ' })).status).toBe(400);
+    const arith = (await api().post(`${imp}/preview`, { type: 7, text: '2+3=5\n7+1=8\n9-4=5' })).body.data;
+    expect(arith.source).toBe('template');
+    expect(arith.items.map((x: any) => x.pattern)).toEqual(['{{a}} + {{b}} = {{c}}', '{{a}} - {{b}} = {{c}}']);
+    const read = (await api().post(`${imp}/preview`, { type: 2, text: 'Cat face 7 x 8? 56\nCapitala Frantei? Paris\nSalut' })).body.data;
+    expect(read.source).toBe('claude');
+    expect(read.skipped).toEqual([{ text: 'Salut', reason: 'Not a question' }]);
+    expect(read.items[0]).toMatchObject({ kind: 'exercise', problems: [], question: { questionType: 2, groups: [{ options: [{ option: '<p>54</p>' }, { option: '<p>56</p>', isCorrect: true }, { option: '<p>58</p>' }] }] } });
+    expect(read.items[1].problems).toEqual(['Hint is missing']);
+    // Same lines with generate: false go to Claude too.
+    expect((await api().post(`${imp}/preview`, { type: 7, text: '2+3=5', generate: false })).body.data.source).toBe('claude');
+    expect((await api().post(`${imp}/preview`, { type: 2, text: 'fail' })).status).toBe(400);
+    // Save: the template, the good question; the one without a hint is refused by the editor's checks.
+    const savedImp = (await api().post(imp, { microLessonId: mlId, items: [
+      { ...arith.items[0], name: 'Imported 1' },
+      { ...read.items[0], name: 'Imported 2' },
+      { ...read.items[1], name: 'Imported 3' },
+    ] })).body.data;
+    expect(savedImp.created.map((x: any) => [x.name, x.kind])).toEqual([['Imported 1', 'template'], ['Imported 2', 'exercise']]);
+    expect(savedImp.failed).toMatchObject([{ index: 2, name: 'Imported 3' }]);
+    expect(await prisma.$queryRawUnsafe(`SELECT name FROM bx_block_assessmenttest_assessments WHERE name LIKE 'Imported%' ORDER BY id`)).toEqual([{ name: 'Imported 1' }, { name: 'Imported 2' }]);
+    const opened = (await api().get(`/workspace/exercises/${savedImp.created[1].exerciseId}/questions`)).body.data;
+    expect(opened.questions[0]).toMatchObject({ answer: '<p>56</p>' });
+    expect((await api().get(`/workspace/exercises/${savedImp.created[0].exerciseId}/questions?count=3`)).body.data.generated).toBe(true);
+    for (const x of savedImp.created) expect((await api().del(`/workspace/exercises/${x.exerciseId}`)).status).toBe(200);
     for (const id of [add.exerciseId, sub.exerciseId, again.body.data.saved[0].exerciseId]) expect((await api().del(`/workspace/exercises/${id}`)).status).toBe(200);
 
     expect((await api().del(`/workspace/exercises/${sid}`)).status).toBe(200);

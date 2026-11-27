@@ -1,5 +1,6 @@
 import { detectTemplates } from './detect';
 import { calc } from './expression';
+import { importProblems, importSchema, toQuestion } from './import';
 import { QuestionTemplate, TemplateError, checkTemplate, compile, fill, generate } from './template';
 
 const one = (examples: string[], opts = {}) => detectTemplates(examples, opts).templates[0];
@@ -188,5 +189,43 @@ describe('generate (Part B)', () => {
     expect(checkTemplate(bad).join(' ')).toMatch(/unknown "z"/);
     expect(checkTemplate({ ...base, variables: [{ name: 'a', formula: 'b' }, { name: 'b', formula: 'a' }] }).join(' ')).toMatch(/depend on each other/);
     expect(checkTemplate({ ...base, variables: [{ name: 'q', min: 1, max: 2 }] }).join(' ')).toMatch(/unknown/);
+  });
+});
+
+describe('import (pasted questions)', () => {
+  const base = { question: '\\text{Q}', hint: 'h', solution: 's' };
+
+  it('turns Claude\'s fields into the editor\'s groups for each type', () => {
+    const single = toQuestion(2, { ...base, options: ['3', '4', '5'], correct: 1 });
+    expect(single).toMatchObject({ questionType: 2, question: '<p>\\text{Q}</p>', hint: '<p>h</p>' });
+    expect(single.groups[0].options).toEqual([
+      { option: '<p>3</p>', isCorrect: false, sequenceNumber: 1 },
+      { option: '<p>4</p>', isCorrect: true, sequenceNumber: 2 },
+      { option: '<p>5</p>', isCorrect: false, sequenceNumber: 3 },
+    ]);
+    const blanks = toQuestion(7, { ...base, statement: '3 + [Blank] = 7', tiles: [{ text: '4', blank: 1 }, { text: '5', blank: null }] });
+    expect(blanks).toMatchObject({ questionType: 3, questionBody: '3 + [Blank] = 7' });
+    expect(blanks.groups[0].options).toEqual([{ option: '4', isCorrect: true, sequenceNumber: 1 }, { option: '5', isCorrect: false, sequenceNumber: null }]);
+    expect(importProblems(7, blanks)).toEqual([]);
+    const match = toQuestion(6, { ...base, rows: [{ left: 'a', right: '1' }, { left: 'b', right: '2' }] });
+    expect(match.questionType).toBe(4);
+    expect(match.groups.map((g) => g.options.map((o) => [o.option, o.sequenceNumber]))).toEqual([[['<p>a</p>', 1], ['<p>b</p>', 2]], [['<p>1</p>', 1], ['<p>2</p>', 2]]]);
+    const pattern = toQuestion(10, { ...base, terms: ['2', '4', '6', '8'], hidden: 3 });
+    expect(pattern.groups[0].options.map((o) => o.isCorrect)).toEqual([false, false, false, true]);
+    const pairs = toQuestion(1, { ...base, pairs: [{ a: '1/2', b: '0.5' }] });
+    expect(pairs).toMatchObject({ questionType: 7, groups: [{ options: [{ option: '<p>1/2</p>', sequenceNumber: 1 }, { option: '<p>0.5</p>', sequenceNumber: 2 }] }] });
+    const shapes = toQuestion(11, { ...base, shapes: [{ shape: 'triangle', values: ['1', '2', '3'] }], missingShape: 0, missingValue: 2 });
+    expect(shapes.groups[0]).toMatchObject({ shapeType: 'triangle', options: [{ isCorrect: false }, { isCorrect: false }, { isCorrect: true }] });
+  });
+
+  it('lists what the editor would refuse', () => {
+    expect(importProblems(2, toQuestion(2, { ...base, options: ['3'], correct: 5 }))).toEqual(['Needs at least 2 options', 'Needs exactly one correct option']);
+    expect(importProblems(7, toQuestion(7, { ...base, hint: '', statement: '3 + 4', tiles: [] }))).toEqual(['The statement has no [Blank]', 'Hint is missing']);
+    expect(() => toQuestion(9, base)).toThrow();
+  });
+
+  it('asks Claude for every field of the type, all required', () => {
+    const shape = importSchema(10).shape.exercises.element.shape;
+    expect(Object.keys(shape).sort()).toEqual(['hidden', 'hint', 'question', 'solution', 'terms']);
   });
 });

@@ -2,6 +2,9 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { ExerciseEditorService } from '../admin/exercises/exercise-editor.service';
 import { hasDbChange } from '../common/db-changes';
 import { PrismaService } from '../prisma/prisma.service';
+import { detectTemplates } from './detect';
+import { ExerciseWriter } from './exercise-writer';
+import { IMPORT_TYPES, ImportQuestion, importProblems, toQuestion } from './import';
 import { brief, parseRequest, summary, templatesOf } from './requests';
 import { MAX_COUNT, QuestionTemplate, TemplateError, TemplateGroup, TemplateVariable, checkTemplate, describeVariables, generate } from './template';
 
@@ -34,7 +37,90 @@ export class GenerateQuestionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly editor: ExerciseEditorService,
+    private readonly writer: ExerciseWriter,
   ) {}
+
+  // ---------- Paste questions ("Add an exercise" text box) ----------
+
+  /**
+   * Reads pasted questions with their answers into exercises of the chosen type, without saving.
+   * Plain arithmetic lines ("2+3=5") of a type Part A knows become one template each (new numbers
+   * every time); anything else is read by Claude into the type's answer fields.
+   */
+  async importPreview(body: Row) {
+    const type = Number(body?.type);
+    const t = IMPORT_TYPES[type];
+    if (!t?.legacy) throw new BadRequestException('Choose an exercise type that can be created');
+    const text = typeof body?.text === 'string' ? body.text.trim() : '';
+    if (!text) throw new BadRequestException('Paste at least one question');
+    if (text.length > 20000) throw new BadRequestException('That is too much text at once: paste at most about 20 questions');
+
+    const lines = text.split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean);
+    if (t.partA && body?.generate !== false && lines.length <= 200) {
+      try {
+        const r = detectTemplates(lines, { type: t.partA as never });
+        if (!r.skipped.length) {
+          return {
+            data: {
+              source: 'template',
+              items: r.templates.map((d) => ({ kind: 'template', partAType: t.partA, ...summary(d, 3) })),
+              skipped: [],
+            },
+          };
+        }
+      } catch (e) {
+        if (!(e instanceof TemplateError)) throw e;
+      }
+    }
+
+    const out = await this.writer.read(type, text);
+    const items = out.exercises.map((x) => {
+      const question = toQuestion(type, x);
+      return { kind: 'exercise', question, problems: importProblems(type, question) };
+    });
+    if (!items.length) throw new BadRequestException({ message: `No ${t.name} question found in the text`, problems: out.skipped.map((s) => `${s.text}: ${s.reason}`) });
+    return { data: { source: 'claude', items, skipped: out.skipped } };
+  }
+
+  /**
+   * Saves the items of a preview as exercises at the end of the micro lesson: a template item through
+   * Part A, an exercise item through the editor (same checks as the editor's Save).
+   */
+  async importSave(body: Row) {
+    const microLessonId = Number(body?.microLessonId);
+    if (!Number.isInteger(microLessonId) || microLessonId < 1) throw new BadRequestException('microLessonId is required');
+    const items: Row[] = Array.isArray(body?.items) ? body.items : [];
+    if (!items.length) throw new BadRequestException('Nothing to save');
+    if (items.length > 50) throw new BadRequestException('Save at most 50 exercises at once');
+    const isAha = !!body?.isAha;
+    const created: Row[] = [];
+    const failed: Row[] = [];
+    for (const [i, item] of items.entries()) {
+      const wanted = typeof item?.name === 'string' && item.name.trim() ? item.name.trim().replace(/\s+/g, ' ') : `Exercise ${i + 1}`;
+      try {
+        if (item?.kind === 'template') {
+          const r = await this.save({ examples: item.examples, type: item.partAType, microLessonId, name: wanted, isAha });
+          for (const s of r.data.saved as Row[]) created.push({ exerciseId: s.exerciseId, name: s.name, kind: 'template' });
+          continue;
+        }
+        const q = item?.question as ImportQuestion | undefined;
+        if (!q || typeof q !== 'object') throw new BadRequestException('Missing question');
+        const name = await this.freeName(microLessonId, wanted);
+        const id = (await this.editor.create({ microLessonId, name, isAha })).data.id;
+        try {
+          await this.editor.save(id, { name, isAha, question: { ...q, id: null, groups: (q.groups ?? []).map((g) => ({ ...g, id: null, options: g.options.map((o) => ({ ...o, id: null })) })) } });
+        } catch (e) {
+          await this.editor.remove(id).catch(() => undefined);
+          throw e;
+        }
+        created.push({ exerciseId: id, name, kind: 'exercise' });
+      } catch (e) {
+        const res = (e as { response?: { message?: string; problems?: string[] } }).response;
+        failed.push({ index: i, name: wanted, problems: res?.problems ?? [res?.message ?? (e as Error).message] });
+      }
+    }
+    return { data: { created, failed } };
+  }
 
   // ---------- Part A ----------
 

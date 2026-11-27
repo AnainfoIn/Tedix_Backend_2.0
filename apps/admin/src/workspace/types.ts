@@ -183,3 +183,24 @@ export const TONES: Record<Tone, { bg: string; fg: string }> = {
 
 export const STATUS_TONE: Record<Status, Tone> = { auto: 'auto', edited: 'edit', reviewed: 'rev' };
 export const STATUS_LABEL: Record<Status, string> = { auto: 'Auto', edited: 'Edited', reviewed: 'Reviewed' };
+
+/* ---------- Paste questions ("Add an exercise" text box): generateQuestion import ---------- */
+
+export interface ImportOption { option: string; isCorrect: boolean; sequenceNumber: number | null }
+export interface ImportQuestion {
+  questionType: number; question: string; questionBody: string | null; hint: string; solution: string;
+  groups: Array<{ shapeType: string | null; options: ImportOption[] }>;
+}
+export interface ImportSample { question: string; questionBody: string | null; answer: string }
+export type ImportItem =
+  | { kind: 'exercise'; question: ImportQuestion; problems: string[] }
+  | { kind: 'template'; partAType: string; type: string; pattern: string; examples: string[]; variables: string[]; questions: ImportSample[] };
+export interface ImportPreview { source: 'template' | 'claude'; items: ImportItem[]; skipped: Array<{ text: string; reason: string }> }
+
+export const previewImport = (body: { type: number; text: string; generate: boolean }) =>
+  apiFetch<{ data: ImportPreview }>('/workspace/question-templates/import/preview', { method: 'POST', body: JSON.stringify(body) }).then((r) => r.data);
+
+export const saveImport = (body: { microLessonId: number; isAha: boolean; items: Array<ImportItem & { name: string }> }) =>
+  apiFetch<{ data: { created: Array<{ exerciseId: number; name: string; kind: string }>; failed: Array<{ index: number; name: string; problems: string[] }> } }>(
+    '/workspace/question-templates/import', { method: 'POST', body: JSON.stringify(body) },
+  ).then((r) => r.data);

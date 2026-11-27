@@ -13,6 +13,8 @@ const seedOf = (seed?: string) => (seed == null || seed === '' || !Number.isInte
  *   POST question-templates/preview    examples -> templates with sample questions (saves nothing)
  *   POST question-templates/generate   examples or template -> N questions with answers (saves nothing)
  *   POST question-templates            examples -> template exercises of a micro lesson (or into one exercise)
+ *   POST question-templates/import/preview  pasted questions + type -> exercises to review (Part A or Claude)
+ *   POST question-templates/import          saves the reviewed items into the micro lesson
  *
  * Part B, serve them:
  *   GET  exercises/:id/template        the exercise read as a template (texts, options, variables, problems)
@@ -40,6 +42,18 @@ export class GenerateQuestionController {
   @RequirePermission('read', 'micro_lessons')
   generate(@Body() body: Record<string, any>) {
     return this.service.generateFrom(body ?? {});
+  }
+
+  @Post('question-templates/import/preview')
+  @RequirePermission('manage', 'micro_lessons')
+  importPreview(@Body() body: Record<string, any>) {
+    return this.service.importPreview(body ?? {});
+  }
+
+  @Post('question-templates/import')
+  @RequirePermission('manage', 'micro_lessons')
+  importSave(@Body() body: Record<string, any>) {
+    return this.service.importSave(body ?? {});
   }
 
   @Post('question-templates')

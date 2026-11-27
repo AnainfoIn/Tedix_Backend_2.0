@@ -85,6 +85,27 @@ Request body for Part A (`linkTo` also links the saved templates to other quizze
 }
 ```
 
+## Paste questions in "Add an exercise"
+
+The "Add an exercise" dialog has a text box, **Paste questions with their answers**. Pick the type, paste
+the questions (one per line or paragraph, with their answers), and press **Read questions**:
+
+- Plain sums such as `2+3=5` for Single Choice, Fill in the Blank or Number Pattern become Part A
+  templates (new numbers each time). Untick "Turn plain sums ... into a template" to keep them fixed.
+- Anything else is read by Claude (`claude-opus-5-5`, structured output) into that type's answer
+  fields: options and the correct one, pairs, rows, [Blank] tiles, terms, shapes and so on. Missing
+  hints and solutions are written in the same language. Text that is not a question is listed as not used.
+- The list shows each exercise with its answer. Ones the editor would refuse (for example no hint) are
+  unticked with the reason. **Create N exercises** adds the ticked ones at the end of the micro lesson,
+  named in its pattern, and opens the first in the editor.
+
+The server needs `ANTHROPIC_API_KEY`. The rules of each type live in code (`import.ts`), not in the
+prompt, so a saved exercise always has the shape the editor and the app expect.
+
+API: `POST question-templates/import/preview` with `{ type, text, generate }` (type = the editor's 1 to
+12), then `POST question-templates/import` with `{ microLessonId, isAha, items }`. Both need manage
+micro_lessons.
+
 ## MCP server
 
 ```bash

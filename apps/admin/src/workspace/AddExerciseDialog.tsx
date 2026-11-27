@@ -2,8 +2,32 @@ import { Box, CircularProgress, Dialog, Typography } from '@mui/material';
 import { useState } from 'react';
 import { ApiError } from '../api';
 import { TYPES } from './exerciseModel';
-import { X } from './exerciseUi';
-import { createExercise } from './types';
+import { Shown, X } from './exerciseUi';
+import { createExercise, ImportItem, ImportPreview, ImportQuestion, previewImport, saveImport } from './types';
+
+/** Types whose plain sums ("2+3=5") the generateQuestion module turns into a template with new numbers each time. */
+const TEMPLATE_TYPES = [2, 7, 10];
+
+const PLACEHOLDER: Record<number, string> = {
+  1: '1/2 = 0.5\n1/4 = 0.25',
+  2: 'Cat face 7 × 8? Answer: 56\nCapitala Frantei? a) Paris b) Lyon. Answer: Paris',
+  7: '2+3=5\n12 - ? = 7',
+  10: '2, 4, 6, ?\n3, 6, 12, 24',
+};
+
+/** The answer of a read question, for the review list. */
+function answerOf(q: ImportQuestion): string[] {
+  const opts = q.groups.flatMap((g) => g.options);
+  switch (q.questionType) {
+    case 7: return [`${q.groups.length} pairs`];
+    case 4: return [`${q.groups[0]?.options.length ?? 0} rows to match`];
+    case 3: return opts.filter((o) => o.sequenceNumber != null).sort((a, b) => a.sequenceNumber! - b.sequenceNumber!).map((o) => o.option);
+    case 12: return [`${q.groups.length} example rows`];
+    case 11: return [`${q.groups.length} shapes`];
+    case 13: return opts.filter((o) => o.isCorrect).map((o) => `${o.option} at ${o.sequenceNumber}`);
+    default: return opts.filter((o) => o.isCorrect).map((o) => o.option);
+  }
+}
 
 /** What each type asks the student, and the answer fields the editor shows for it (design board 2). */
 const ABOUT: Record<number, [string, string]> = {
@@ -49,6 +73,65 @@ export function AddExerciseDialog(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const type = TYPES.find((t) => t.n === picked)!;
+  // Paste questions with their answers: read into exercises of the picked type, reviewed before saving.
+  const [text, setText] = useState('');
+  const [makeTemplates, setMakeTemplates] = useState(true);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [keep, setKeep] = useState<boolean[]>([]);
+  const [firstMade, setFirstMade] = useState<number | null>(null);
+  const pasting = !!text.trim();
+  const kept = preview ? preview.items.filter((_, i) => keep[i]) : [];
+
+  const failText = (e: unknown) => {
+    const body = e instanceof ApiError ? (e.body as { problems?: string[]; message?: string } | null) : null;
+    return [body?.message, ...(body?.problems ?? [])].filter(Boolean).join('. ') || (e as Error).message;
+  };
+
+  const read = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const p = await previewImport({ type: picked, text, generate: makeTemplates });
+      setPreview(p);
+      setKeep(p.items.map((it) => it.kind === 'template' || !it.problems.length));
+    } catch (e) {
+      setError(failText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveAll = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const used = [...props.names];
+      const items = kept.map((it, i) => {
+        const n = i === 0 ? name.trim() : suggestName(used);
+        used.push(n);
+        return { ...it, name: n };
+      });
+      const r = await saveImport({ microLessonId: props.microLessonId, isAha, items });
+      const first = firstMade ?? r.created[0]?.exerciseId ?? null;
+      if (!r.failed.length && first != null) {
+        await props.onCreated(first, type.legacy[0]);
+        return;
+      }
+      // Keep only what could not be saved, with why; the rest is already in the micro lesson.
+      const failedAt = new Set(r.failed.map((f) => f.index));
+      const left = kept.filter((_, i) => failedAt.has(i));
+      setFirstMade(first);
+      setPreview(preview && { ...preview, items: left });
+      setKeep(left.map(() => true));
+      setError(`${r.created.length} created. Not saved: ${r.failed.map((f) => `${f.name}: ${f.problems.join(', ')}`).join('; ')}`);
+      setBusy(false);
+    } catch (e) {
+      setError(failText(e));
+      setBusy(false);
+    }
+  };
+
+  const close = () => (firstMade != null ? props.onCreated(firstMade, type.legacy[0]) : props.onClose());
 
   const create = async () => {
     setBusy(true);
@@ -64,7 +147,7 @@ export function AddExerciseDialog(props: {
   };
 
   return (
-    <Dialog open onClose={busy ? undefined : props.onClose} maxWidth={false} aria-labelledby="add-exercise-title"
+    <Dialog open onClose={busy ? undefined : close} maxWidth={false} aria-labelledby="add-exercise-title"
       PaperProps={{ sx: { width: '100%', maxWidth: 1040, borderRadius: '14px', fontFamily: 'Inter, system-ui, sans-serif', color: X.text } }}>
       <Box sx={{ p: '20px 24px 12px', display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
         <Box sx={{ flex: 1 }}>
@@ -73,7 +156,7 @@ export function AddExerciseDialog(props: {
             Pick its type. The type sets which answer fields the editor shows, and can't be changed later without clearing the answers.
           </Typography>
         </Box>
-        <Box component="button" type="button" aria-label="Close" onClick={props.onClose} disabled={busy}
+        <Box component="button" type="button" aria-label="Close" onClick={close} disabled={busy}
           sx={{ width: 36, height: 36, border: 0, bgcolor: 'transparent', borderRadius: '8px', color: X.muted, cursor: 'pointer', fontSize: 18 }}>✕</Box>
       </Box>
 
@@ -97,7 +180,7 @@ export function AddExerciseDialog(props: {
           return (
             <Box key={t.n} component="button" type="button" role="radio" aria-checked={on} disabled={off}
               title={off ? 'Not available yet: the student app does not support this type' : undefined}
-              onClick={() => setPicked(t.n)}
+              onClick={() => { setPicked(t.n); setPreview(null); }}
               sx={{
                 display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, textAlign: 'left', p: '14px 16px', borderRadius: '10px', minHeight: 124,
                 font: 'inherit', color: X.text, cursor: 'pointer',
@@ -116,15 +199,65 @@ export function AddExerciseDialog(props: {
         })}
       </Box>
 
+      <Box sx={{ p: '0 24px 18px', display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Box component="label" htmlFor="paste-questions" sx={{ fontSize: 13, fontWeight: 600 }}>
+          Paste questions with their answers <Box component="span" sx={{ fontWeight: 400, color: X.muted }}>(optional: one exercise is made for each question, as {type.name})</Box>
+        </Box>
+        <textarea id="paste-questions" rows={4} value={text} disabled={busy}
+          placeholder={PLACEHOLDER[picked] ?? 'One question per line or paragraph, with its answer'}
+          onChange={(e) => { setText(e.target.value); setPreview(null); setError(null); }}
+          style={{ border: '1px solid #C5CAD3', borderRadius: 8, padding: '8px 12px', font: '400 14px Inter, sans-serif', color: X.text, resize: 'vertical' }} />
+        {pasting && TEMPLATE_TYPES.includes(picked) && (
+          <Box component="label" sx={{ display: 'flex', alignItems: 'center', gap: 1, fontSize: 13, color: X.muted }}>
+            <input type="checkbox" checked={makeTemplates} disabled={busy} onChange={(e) => { setMakeTemplates(e.target.checked); setPreview(null); }} style={{ accentColor: X.blue }} />
+            Turn plain sums like 2+3=5 into a template that gives new numbers each time
+          </Box>
+        )}
+        {preview && (
+          <Box role="list" aria-label="Questions read" sx={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 340, overflow: 'auto', border: `1px solid ${X.line}`, borderRadius: '10px', p: 1.25 }}>
+            <Box sx={{ fontSize: 12, color: X.muted }}>
+              {preview.source === 'template' ? 'Read as templates: each one gives new numbers every time it is opened.' : 'Read by Claude. Check each one; you can edit them in the editor after saving.'}
+            </Box>
+            {preview.items.map((it: ImportItem, i) => (
+              <Box role="listitem" key={i} component="label" sx={{ display: 'grid', gridTemplateColumns: '22px minmax(0,1fr)', gap: 1, alignItems: 'start', p: 1, borderRadius: '8px', bgcolor: keep[i] ? '#F5F9FF' : '#fff', border: `1px solid ${X.line}` }}>
+                <input type="checkbox" checked={!!keep[i]} disabled={busy} aria-label={`Create exercise ${i + 1}`}
+                  onChange={(e) => setKeep(keep.map((k, j) => (j === i ? e.target.checked : k)))} style={{ marginTop: 4, accentColor: X.blue }} />
+                {it.kind === 'template' ? (
+                  <Box sx={{ minWidth: 0, fontSize: 13 }}>
+                    <Box sx={{ fontWeight: 600 }}>Template: {it.pattern}</Box>
+                    <Box sx={{ color: X.muted }}>{it.variables.join('; ')}</Box>
+                    {it.questions.map((q, k) => <Box key={k} sx={{ color: X.muted }}>Example: {q.questionBody ?? q.question} → {q.answer}</Box>)}
+                  </Box>
+                ) : (
+                  <Box sx={{ minWidth: 0, fontSize: 13, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <Shown value={it.question.question} size={14} />
+                    {it.question.questionBody && <Shown value={it.question.questionBody} size={14} />}
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', color: '#1E7D4F' }}>
+                      Answer: {answerOf(it.question).map((a, k) => <Shown key={k} value={a} size={13} />)}
+                    </Box>
+                    {!!it.problems.length && <Box sx={{ color: '#B3261E', fontSize: 12 }}>To fix before it can be saved: {it.problems.join('; ')}</Box>}
+                  </Box>
+                )}
+              </Box>
+            ))}
+            {preview.skipped.map((sk, i) => (
+              <Box key={`s${i}`} sx={{ fontSize: 12, color: X.muted }}>Not used: “{sk.text}” ({sk.reason})</Box>
+            ))}
+          </Box>
+        )}
+      </Box>
+
       <Box sx={{ p: '14px 24px', borderTop: `1px solid ${X.line}`, display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
         <Box component="span" sx={{ color: X.muted, fontSize: 13 }}>Selected: <Box component="strong" sx={{ color: X.text }}>{type.name}</Box></Box>
         {error && <Box component="span" role="alert" sx={{ color: '#B3261E', fontSize: 13 }}>{error}</Box>}
         <Box sx={{ flex: 1 }} />
-        <Box component="button" type="button" onClick={props.onClose} disabled={busy}
+        <Box component="button" type="button" onClick={close} disabled={busy}
           sx={{ height: 38, px: 2, border: 0, bgcolor: 'transparent', color: X.text, fontWeight: 600, fontSize: 14, cursor: 'pointer', borderRadius: '8px' }}>Cancel</Box>
-        <Box component="button" type="button" onClick={create} disabled={busy || name.trim().length < 2}
+        <Box component="button" type="button" onClick={!pasting ? create : preview ? saveAll : read}
+          disabled={busy || name.trim().length < 2 || (!!preview && !kept.length)}
           sx={{ height: 38, px: 2.25, border: 0, borderRadius: '8px', bgcolor: X.blue, color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 1, '&:disabled': { opacity: 0.6, cursor: 'default' } }}>
-          {busy && <CircularProgress size={14} sx={{ color: '#fff' }} />}Create and open editor
+          {busy && <CircularProgress size={14} sx={{ color: '#fff' }} />}
+          {!pasting ? 'Create and open editor' : !preview ? (busy ? 'Reading…' : 'Read questions') : `Create ${kept.length} exercise${kept.length === 1 ? '' : 's'}`}
         </Box>
       </Box>
     </Dialog>
