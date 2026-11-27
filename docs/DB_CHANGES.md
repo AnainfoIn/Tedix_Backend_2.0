@@ -21,6 +21,7 @@ Always take a backup first (`pg_dump --format=custom --file=before-<nnn>.dump "$
 | 001 | Merge questions into exercises | 2026-11-26 (660 → 701 exercises, 21 split) | not applied yet |
 | 002 | Exercise translations (multilanguage) | 2026-11-26 (15 name, 51 question, 72 option translations moved) | not applied yet |
 | 003 | Exercise order and "Check type" flag | 2026-11-26 (346 flagged) | not applied yet |
+| 004 | Question templates (generateQuestion) | not applied yet | not applied yet |
 
 When a change is applied, write the date in the table above.
 
@@ -218,6 +219,60 @@ On the local copy: positions 1..n per micro lesson; 313 of 651 exercises flagged
 Challenge plus the 15 split ones); a Rails-style insert through the view lands at the end with
 no flag; down, up again, and a refused second run. The 2.0 e2e tests reorder, read the flag and
 clear it by saving, with and without the change.
+
+---
+
+## 004 Question templates (generateQuestion)
+
+Needs 001. For the generateQuestion module and its MCP server ([GENERATE_QUESTION.md](GENERATE_QUESTION.md)):
+an exercise made from examples like `2+3=5` is stored as a template, `{a} + {b} = {c}` with
+number ranges, and every time it is served the 2.0 API draws new numbers.
+
+### What `up.sql` does
+
+1. Adds `exercises.question_template` (jsonb, NULL = normal exercise). It holds the question, body,
+   hint, solution and answer options with `{placeholders}`, in the editor's format for the exercise
+   type, plus the variables (range or formula) and conditions. A check keeps it a JSON object.
+2. Adds a trigger: when an exercise loses its question (Rails deletes it through the view), its
+   template is removed too.
+
+Nothing else changes. A template exercise also keeps a normal, filled-in question (the first
+example, e.g. `2 + 3 = [Blank]` with the tile `5`) in the usual columns and answer option tables,
+with `questionbank_type = 'template'` (a value Rails already allows). So Rails, ActiveAdmin and
+the student app, which do not know templates, keep showing a valid question. The old-name views
+do not show the new column. Running `up.sql` twice is refused.
+
+### Order of steps
+
+1. Changes 001 to 003 are applied.
+2. Backup, `check-before.sql` (001 applied, column not there yet), then `up.sql`.
+3. Check: save a template with the MCP server or `POST /admin/api/workspace/question-templates`,
+   then `GET /admin/api/workspace/exercises/<id>/variants?count=15`.
+
+The 2.0 backend checks whether the column exists: before 004 the template calls answer
+"Question templates need database change 004", everything else works as before.
+
+### Undo
+
+`down.sql` drops the trigger and the column, and sets the template exercises back to
+`questionbank_type = 'regular'`. They keep their filled-in sample question.
+
+### Things to know
+
+- Editing a template exercise in the exercise editor changes its sample only; the served
+  questions still come from the template. Change the template by saving new examples into the
+  same exercise (`exerciseId`).
+- The student app still reads exercises from Rails, so students see the sample until the app's
+  exercise endpoint moves to the 2.0 API (which then calls the same generator).
+
+### How it was tested
+
+On a local Postgres 16 with `db/rails-full-schema.sql` and 001 to 003: up, second run refused,
+down, up again. The 2.0 e2e tests (`TEST_DB_CHANGES=1`) save templates from examples into a micro
+lesson and into an existing exercise, read the sample through the old-name views (question and
+answer tiles as the editor saves them), serve 15 different questions with correct answers, turn a
+template back into a normal exercise, and check that deleting the question through the view drops
+the template. Without the change they check the "needs database change 004" answer.
 
 ---
 

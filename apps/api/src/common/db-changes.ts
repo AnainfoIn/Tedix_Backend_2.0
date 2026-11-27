@@ -11,6 +11,8 @@ const CHECKS: Record<string, string> = {
   exercises: `SELECT to_regclass('exercises') IS NOT NULL AS ok`,
   // 003: exercises.position / needs_review
   exerciseOrder: `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'exercises' AND column_name = 'position') AS ok`,
+  // 004: exercises.question_template
+  questionTemplate: `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'exercises' AND column_name = 'question_template') AS ok`,
 };
 
 export type DbChange = keyof typeof CHECKS;

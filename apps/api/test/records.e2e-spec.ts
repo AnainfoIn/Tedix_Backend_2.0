@@ -465,6 +465,67 @@ describeDb('generic admin resources (e2e)', () => {
     expect((await api().put(`/workspace/exercises/${aid}`, { ...editorBody(null, [{ options: [{ option: 'A', isCorrect: true, sequenceNumber: null }] }]), name: 'Third one' })).status).toBe(200);
     expect((await api().del(`/workspace/exercises/${aid}`)).status).toBe(200);
 
+    // generateQuestion: examples become template exercises, served with new numbers (needs DB change 004).
+    const preview = await api().post('/workspace/question-templates/preview', { examples: ['2+3=5', '12 : 3 = 4', '2+3=6'], count: 3, seed: 1 });
+    expect(preview.status).toBe(201);
+    expect(preview.body.data.templates.map((t: any) => t.pattern)).toEqual(['{a} + {b} = {c}', '{a} : {b} = {c}']);
+    expect(preview.body.data.templates[0].questions[0]).toMatchObject({ questionBody: '2 + 3 = [Blank]', answer: '5' });
+    expect(preview.body.data.skipped.map((x: any) => x.example)).toEqual(['2+3=6']);
+    expect((await api().post('/workspace/question-templates/preview', { examples: ['hello'] })).status).toBe(400);
+    const loose = await api().post('/workspace/question-templates/generate', { examples: ['2+3=5'], count: 15 });
+    expect(loose.body.data.templates[0].questions).toHaveLength(15);
+    expect((await api('viewer').post('/workspace/question-templates', { examples: ['2+3=5'], microLessonId: mlId })).status).toBe(403);
+    const tpl = await api().post('/workspace/question-templates', { examples: ['2+3=5', '7 - 4 = 3'], microLessonId: mlId });
+    if (process.env.TEST_DB_CHANGES) {
+      expect(tpl.status).toBe(201);
+      const [add, sub] = tpl.body.data.saved;
+      expect(add).toMatchObject({ name: 'Fill in the Blank: {a} + {b} = {c}', sample: { questionBody: '2 + 3 = [Blank]', answer: '5' } });
+      expect(sub).toMatchObject({ name: 'Fill in the Blank: {a} - {b} = {c}', sample: { questionBody: '7 - 4 = [Blank]', answer: '3' } });
+      const [row] = await prisma.$queryRawUnsafe<Record<string, any>[]>(
+        `SELECT questionbank_type, question_type, question_body, question_template->>'pattern' AS pattern FROM exercises WHERE id = ${add.exerciseId}`,
+      );
+      expect(row).toEqual({ questionbank_type: 'template', question_type: 3, question_body: '2 + 3 = [Blank]', pattern: '{a} + {b} = {c}' });
+      // Rails and the app read the sample through the old-name views, in the editor's format.
+      const tiles = await prisma.$queryRawUnsafe<Record<string, any>[]>(
+        `SELECT o.option, o.is_correct, o.sequence_number FROM bx_block_assessmenttest_answer_options o
+         JOIN answer_option_groups g ON g.id = o.answer_option_group_id JOIN bx_block_assessmenttest_questionbanks q ON q.id = g.questionbank_id
+         WHERE q.assessment_id = ${add.exerciseId} ORDER BY o.id`,
+      );
+      expect(tiles).toEqual([
+        { option: '5', is_correct: true, sequence_number: 1 },
+        { option: '6', is_correct: false, sequence_number: null },
+        { option: '4', is_correct: false, sequence_number: null },
+      ]);
+      const variants = await api().get(`/workspace/exercises/${add.exerciseId}/variants?count=15&seed=3`);
+      expect(variants.status).toBe(200);
+      expect(variants.body.data.questions).toHaveLength(15);
+      expect(new Set(variants.body.data.questions.map((q: any) => q.questionBody)).size).toBe(15);
+      for (const q of variants.body.data.questions) expect(Number(q.answer)).toBe(q.values.a + q.values.b);
+      expect((await api('viewer').get(`/workspace/exercises/${add.exerciseId}/variants?count=2`)).status).toBe(200);
+      expect((await api().get(`/workspace/exercises/${add.exerciseId}/variants?count=0`)).status).toBe(400);
+      // Into an existing exercise: it keeps its name, its question becomes the template's sample.
+      const into = await api().post('/workspace/question-templates', { examples: ['2, 4, 6, ?'], exerciseId: sub.exerciseId });
+      expect(into.body.data.saved[0]).toMatchObject({ exerciseId: sub.exerciseId, name: sub.name, type: 'Number Pattern' });
+      expect((await api().get(`/workspace/exercises/${sub.exerciseId}/template`)).body.data.template.questionType).toBe(10);
+      expect((await api().post('/workspace/question-templates', { examples: ['2+3=5', '2,4,6,?'], exerciseId: sub.exerciseId })).status).toBe(400);
+      const again = await api().post('/workspace/question-templates', { examples: ['2+3=5'], microLessonId: mlId });
+      expect(again.body.data.saved[0].name).toBe('Fill in the Blank: {a} + {b} = {c} (2)');
+      // Back to a normal exercise; it keeps the sample.
+      expect((await api().del(`/workspace/exercises/${add.exerciseId}/template`)).status).toBe(200);
+      expect((await api().get(`/workspace/exercises/${add.exerciseId}/variants`)).status).toBe(400);
+      expect((await api().get(`/workspace/exercises/${add.exerciseId}/template`)).body.data.template).toBeNull();
+      // Rails removing the question (through the view) removes the template too.
+      const againId = again.body.data.saved[0].exerciseId;
+      await prisma.$executeRawUnsafe(`DELETE FROM bx_block_assessmenttest_answer_options WHERE answer_option_group_id IN (SELECT id FROM answer_option_groups WHERE questionbank_id = (SELECT question_id FROM exercises WHERE id = ${againId}))`);
+      await prisma.$executeRawUnsafe(`DELETE FROM answer_option_groups WHERE questionbank_id = (SELECT question_id FROM exercises WHERE id = ${againId})`);
+      await prisma.$executeRawUnsafe(`DELETE FROM bx_block_assessmenttest_questionbanks WHERE assessment_id = ${againId}`);
+      expect(await prisma.$queryRawUnsafe(`SELECT question_template FROM exercises WHERE id = ${againId}`)).toEqual([{ question_template: null }]);
+      for (const id of [add.exerciseId, sub.exerciseId, againId]) expect((await api().del(`/workspace/exercises/${id}`)).status).toBe(200);
+    } else {
+      expect(tpl.status).toBe(400);
+      expect(tpl.body.message).toMatch(/database change 004/);
+    }
+
     expect((await api().del(`/workspace/exercises/${sid}`)).status).toBe(200);
     expect(await prisma.$queryRawUnsafe(`SELECT id FROM bx_block_assessmenttest_assessments WHERE id = ${sid}`)).toEqual([]);
 

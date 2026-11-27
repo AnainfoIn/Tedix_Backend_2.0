@@ -66,6 +66,15 @@ The admin's Contents section uses the Rails tables (`account_block_countries`, `
   `STORAGE_ENDPOINT` and `STORAGE_REGION` (the Rails app's values). Without them, pages work but files can't be
   shown or uploaded.
 
+## generateQuestion (exercises from examples) and its MCP server
+
+Give example exercises like `2+3=5`; they become templates (`{a} + {b} = {c}`) saved as exercises,
+served with new numbers each time. Needs DB change 004. Setup and API: [docs/GENERATE_QUESTION.md](docs/GENERATE_QUESTION.md).
+
+```bash
+TEDIX_API_URL=http://localhost:4000 TEDIX_ADMIN_EMAIL=you@example.com TEDIX_ADMIN_PASSWORD='...' npm run mcp
+```
+
 ## Tests
 
 ```bash

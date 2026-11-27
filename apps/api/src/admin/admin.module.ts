@@ -20,6 +20,8 @@ import { ExerciseEditorController } from './exercises/exercise-editor.controller
 import { ExerciseEditorService } from './exercises/exercise-editor.service';
 import { TranslationsController } from './translations/translations.controller';
 import { TranslationsService } from './translations/translations.service';
+import { GenerateQuestionController } from '../generate-question/generate-question.controller';
+import { GenerateQuestionService } from '../generate-question/generate-question.service';
 import { RolesController } from './roles/roles.controller';
 import { RolesService } from './roles/roles.service';
 import { RECORD_CONTROLLERS } from './records/records.controller';
@@ -27,7 +29,7 @@ import { RecordsService } from './records/records.service';
 
 /** Admin panel API (replaces ActiveAdmin). Each migrated module adds its admin controllers here. */
 @Module({
-  controllers: [AdminAuthController, DashboardController, AnalyticsController, RolesController, AdminUsersController, NotificationsController, LatexController, TranslationsController, ExerciseEditorController, CurriculumController, ...CONTENT_CONTROLLERS, ...RECORD_CONTROLLERS],
-  providers: [AdminTokenService, AdminAuthGuard, AdminAuthService, LoginRateLimiter, RolesService, AdminUsersService, ContentsService, RecordsService, NotificationsService, LatexService, TranslationsService, ExerciseEditorService, CurriculumService],
+  controllers: [AdminAuthController, DashboardController, AnalyticsController, RolesController, AdminUsersController, NotificationsController, LatexController, TranslationsController, ExerciseEditorController, GenerateQuestionController, CurriculumController, ...CONTENT_CONTROLLERS, ...RECORD_CONTROLLERS],
+  providers: [AdminTokenService, AdminAuthGuard, AdminAuthService, LoginRateLimiter, RolesService, AdminUsersService, ContentsService, RecordsService, NotificationsService, LatexService, TranslationsService, ExerciseEditorService, GenerateQuestionService, CurriculumService],
 })
 export class AdminModule {}
