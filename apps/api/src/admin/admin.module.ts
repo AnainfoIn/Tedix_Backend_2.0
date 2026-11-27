@@ -16,6 +16,8 @@ import { LatexController } from './latex/latex.controller';
 import { LatexService } from './latex/latex.service';
 import { CurriculumController } from './curriculum/curriculum.controller';
 import { CurriculumService } from './curriculum/curriculum.service';
+import { DataAnalyticsController } from './data-analytics/data-analytics.controller';
+import { DataAnalyticsService } from './data-analytics/data-analytics.service';
 import { ExerciseEditorController } from './exercises/exercise-editor.controller';
 import { ExerciseEditorService } from './exercises/exercise-editor.service';
 import { TranslationsController } from './translations/translations.controller';
@@ -27,7 +29,7 @@ import { RecordsService } from './records/records.service';
 
 /** Admin panel API (replaces ActiveAdmin). Each migrated module adds its admin controllers here. */
 @Module({
-  controllers: [AdminAuthController, DashboardController, AnalyticsController, RolesController, AdminUsersController, NotificationsController, LatexController, TranslationsController, ExerciseEditorController, CurriculumController, ...CONTENT_CONTROLLERS, ...RECORD_CONTROLLERS],
-  providers: [AdminTokenService, AdminAuthGuard, AdminAuthService, LoginRateLimiter, RolesService, AdminUsersService, ContentsService, RecordsService, NotificationsService, LatexService, TranslationsService, ExerciseEditorService, CurriculumService],
+  controllers: [AdminAuthController, DashboardController, AnalyticsController, RolesController, AdminUsersController, NotificationsController, LatexController, TranslationsController, ExerciseEditorController, CurriculumController, DataAnalyticsController, ...CONTENT_CONTROLLERS, ...RECORD_CONTROLLERS],
+  providers: [AdminTokenService, AdminAuthGuard, AdminAuthService, LoginRateLimiter, RolesService, AdminUsersService, ContentsService, RecordsService, NotificationsService, LatexService, TranslationsService, ExerciseEditorService, CurriculumService, DataAnalyticsService],
 })
 export class AdminModule {}

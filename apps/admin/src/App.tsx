@@ -5,6 +5,7 @@ import ListAltIcon from '@mui/icons-material/ListAlt';
 import PublicIcon from '@mui/icons-material/Public';
 import { Navigate, Route } from 'react-router-dom';
 import { AnalyticsPage } from './analytics/AnalyticsPage';
+import { GeneratedQuestionsPage } from './data-analytics/GeneratedQuestionsPage';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import { NotificationCreate, NotificationEdit, NotificationList, NotificationShow } from './resources/notifications';
 import { Admin, CustomRoutes, Layout, LayoutProps, Resource } from 'react-admin';
@@ -52,6 +53,8 @@ export function App() {
         <Route path="/micro_lessons/:id/review" element={<ReviewPage />} />
         <Route path="/micro-lessons" element={<MicroLessonSearch />} />
         <Route path="/analytics/:page" element={<AnalyticsPage />} />
+        <Route path="/data-analytics" element={<Navigate to="/data-analytics/generated-questions" replace />} />
+        <Route path="/data-analytics/generated-questions" element={<GeneratedQuestionsPage />} />
       </CustomRoutes>
       {LEVEL_ORDER.map((key) => (
         <Resource
