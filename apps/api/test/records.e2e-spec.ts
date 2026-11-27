@@ -108,6 +108,7 @@ describeDb('generic admin resources (e2e)', () => {
       get: (url: string) => request(server).get(`/admin/api${url}`).set(auth),
       post: (url: string, body: object) => request(server).post(`/admin/api${url}`).set(auth).send(body),
       put: (url: string, body: object) => request(server).put(`/admin/api${url}`).set(auth).send(body),
+      patch: (url: string, body: object) => request(server).patch(`/admin/api${url}`).set(auth).send(body),
       del: (url: string) => request(server).delete(`/admin/api${url}`).set(auth),
     };
   };
@@ -514,7 +515,7 @@ describeDb('generic admin resources (e2e)', () => {
     expect(fixed.questions).toHaveLength(1);
     // The quiz of the micro lesson: one question per exercise, the template ones filled in.
     const quizRes = await api().get(`/workspace/micro_lessons/${mlId}/quiz?seed=1`);
-    if (quizRes.status !== 200) throw new Error(JSON.stringify(quizRes.body));
+    expect(quizRes.status).toBe(200);
     const quiz = quizRes.body.data;
     const quizAdd = quiz.exercises.find((x: any) => x.exerciseId === add.exerciseId);
     expect(quizAdd.generated).toBe(true);
@@ -530,6 +531,43 @@ describeDb('generic admin resources (e2e)', () => {
     expect((await api().post('/workspace/question-templates', { examples: ['2+3=5', '2,4,6,?'], exerciseId: sub.exerciseId })).status).toBe(400);
     const again = await api().post('/workspace/question-templates', { examples: ['2+3=5'], microLessonId: mlId });
     expect(again.body.data.saved[0].name).toBe('Fill in the Blank: {{a}} + {{b}} = {{c}} (2)');
+    // Part B links (change 005): one template feeds the quizzes of other micro lessons too.
+    const other = (await api().post('/micro_lessons', { ...tree, name: 'Adding practice', microLessonType: 1, description: 'Sums' })).body.data.id;
+    const linkUrl = `/workspace/micro_lessons/${other}/template-links`;
+    if (process.env.TEST_DB_CHANGES) {
+      expect((await api('viewer').post(linkUrl, { exerciseId: add.exerciseId })).status).toBe(403);
+      const link = await api().post(linkUrl, { exerciseId: add.exerciseId, questionCount: 3 });
+      expect(link.status).toBe(201);
+      expect(link.body.data).toMatchObject({ exerciseId: add.exerciseId, microLessonId: other, templateMicroLessonId: mlId, position: 1, questionCount: 3 });
+      expect((await api().post(linkUrl, { exerciseId: add.exerciseId })).body.message).toMatch(/already linked/);
+      expect((await api().post(linkUrl, { exerciseId: sid })).body.message).toMatch(/not a template/);
+      expect((await api().post(`/workspace/micro_lessons/${mlId}/template-links`, { exerciseId: add.exerciseId })).body.message).toMatch(/already in the micro lesson/);
+      expect((await api().post(linkUrl, { exerciseId: add.exerciseId, questionCount: 99 })).status).toBe(400);
+      // Saving with linkTo links the new template right away.
+      const linked = (await api().post('/workspace/question-templates', { examples: ['6 × 7 = 42'], microLessonId: mlId, linkTo: [other] })).body.data.saved[0];
+      expect(linked.links).toMatchObject([{ microLessonId: other, position: 2, questionCount: 1 }]);
+      expect((await api().get(linkUrl)).body.data.map((x: any) => x.exerciseId)).toEqual([add.exerciseId, linked.exerciseId]);
+      expect((await api().get(`/workspace/exercises/${add.exerciseId}/template-links`)).body.data.map((x: any) => x.microLessonId)).toEqual([other]);
+      // The other quiz: 3 new questions from the first template, 1 from the second.
+      const otherQuiz = (await api().get(`/workspace/micro_lessons/${other}/quiz`)).body.data.exercises;
+      expect(otherQuiz.map((x: any) => [x.exerciseId, x.source])).toEqual([
+        [add.exerciseId, 'linked'], [add.exerciseId, 'linked'], [add.exerciseId, 'linked'], [linked.exerciseId, 'linked'],
+      ]);
+      expect(new Set(otherQuiz.slice(0, 3).map((x: any) => x.question.questionBody)).size).toBe(3);
+      expect(otherQuiz.every((x: any) => x.generated && !x.question.questionBody.includes('{{'))).toBe(true);
+      const upd = await api().patch(`${linkUrl}/${link.body.data.id}`, { questionCount: 2, position: 5 });
+      expect(upd.body.data).toMatchObject({ questionCount: 2, position: 5 });
+      expect((await api().get(linkUrl)).body.data.map((x: any) => x.exerciseId)).toEqual([linked.exerciseId, add.exerciseId]);
+      expect((await api().del(`${linkUrl}/${link.body.data.id}`)).status).toBe(200);
+      expect((await api().del(`${linkUrl}/${link.body.data.id}`)).status).toBe(404);
+      // Deleting the template exercise removes its links.
+      expect((await api().del(`/workspace/exercises/${linked.exerciseId}`)).status).toBe(200);
+      expect((await api().get(linkUrl)).body.data).toEqual([]);
+    } else {
+      expect((await api().post(linkUrl, { exerciseId: add.exerciseId })).body.message).toMatch(/needs database change 005/);
+      expect((await api().get(`/workspace/micro_lessons/${other}/quiz`)).body.data.exercises).toEqual([]);
+    }
+    expect((await api().del(`/micro_lessons/${other}`)).status).toBe(200);
     for (const id of [add.exerciseId, sub.exerciseId, again.body.data.saved[0].exerciseId]) expect((await api().del(`/workspace/exercises/${id}`)).status).toBe(200);
 
     expect((await api().del(`/workspace/exercises/${sid}`)).status).toBe(200);

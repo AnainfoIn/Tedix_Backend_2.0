@@ -59,6 +59,13 @@ export class GenerateQuestionService {
     if (exerciseId == null && (microLessonId == null || !Number.isInteger(microLessonId) || microLessonId <= 0)) {
       throw new BadRequestException('Give the micro lesson (microLessonId) or the exercise (exerciseId) to save into');
     }
+    // linkTo: other micro lessons whose quizzes also use the saved templates (change 005).
+    const linkTo = body?.linkTo == null ? [] : Array.isArray(body.linkTo) ? body.linkTo.map(Number) : [Number(body.linkTo)];
+    if (linkTo.length) {
+      if (linkTo.some((x: number) => !Number.isInteger(x) || x < 1)) throw new BadRequestException('linkTo must be a list of micro lesson ids');
+      await this.needLinks();
+      for (const ml of linkTo) await this.microLesson(ml);
+    }
     const name = typeof body?.name === 'string' ? body.name.trim().replace(/\s+/g, ' ') : '';
     const saved: Row[] = [];
     for (const [i, d] of templates.entries()) {
@@ -96,7 +103,13 @@ export class GenerateQuestionService {
         await this.writeVariables(tx, Number(q.id), t.variables);
       });
       const sample = guard(() => generate(t, { count: 1, seed: req.seed, first: d.first })).variants[0];
-      saved.push({ exerciseId: id, name: exerciseName, type: d.typeName, pattern: d.pattern, variables: describeVariables(t), sample: sample ? brief(sample) : null });
+      const links: Row[] = [];
+      for (const ml of linkTo) {
+        const [had] = await this.prisma.$queryRawUnsafe<Row[]>('SELECT 1 FROM question_template_links WHERE micro_lesson_id = $1 AND exercise_id = $2', ml, id);
+        const [own] = await this.prisma.$queryRawUnsafe<Row[]>('SELECT micro_lesson_id FROM bx_block_assessmenttest_assessments WHERE id = $1', id);
+        if (!had && Number(own?.micro_lesson_id) !== ml) links.push((await this.link(ml, { exerciseId: id })).data);
+      }
+      saved.push({ exerciseId: id, name: exerciseName, type: d.typeName, pattern: d.pattern, variables: describeVariables(t), sample: sample ? brief(sample) : null, links });
     }
     return { data: { saved, skipped } };
   }
@@ -136,31 +149,145 @@ export class GenerateQuestionService {
     return { data: await this.serve(await this.load(exerciseId), count, seed) };
   }
 
-  /** A quiz for a micro lesson: one freshly generated question per exercise, in the exercise order. */
+  /**
+   * A quiz for a micro lesson: one freshly generated question per exercise of the micro lesson, in
+   * the exercise order, then the templates linked to it (question_template_links, change 005), each
+   * giving its question_count new questions.
+   */
   async quiz(microLessonId: number, seed?: number) {
-    const [ml] = await this.prisma.$queryRawUnsafe<Row[]>('SELECT id, name FROM bx_block_profile_micro_lessons WHERE id = $1', microLessonId);
-    if (!ml) throw new NotFoundException('Micro lesson not found');
+    const ml = await this.microLesson(microLessonId);
     const ordered = await hasDbChange(this.prisma, 'exerciseOrder');
-    const ids = (
+    const own = (
       await this.prisma.$queryRawUnsafe<Row[]>(
         ordered ? 'SELECT id FROM exercises WHERE micro_lesson_id = $1 ORDER BY position, id' : 'SELECT id FROM bx_block_assessmenttest_assessments WHERE micro_lesson_id = $1 ORDER BY id',
         microLessonId,
       )
-    ).map((r) => Number(r.id));
+    ).map((r) => ({ id: Number(r.id), count: 1, linkId: null as number | null }));
+    const linked = (await this.linkRows(microLessonId)).map((r) => ({ id: Number(r.exercise_id), count: Number(r.question_count), linkId: Number(r.id) }));
     const exercises: Row[] = [];
-    for (const [i, id] of ids.entries()) {
-      const t = await this.load(id).catch(() => null);
+    for (const [i, item] of [...own, ...linked].entries()) {
+      const t = await this.load(item.id).catch(() => null);
       if (!t || t.questionId == null) continue;
+      const base = { exerciseId: item.id, name: t.name, source: item.linkId == null ? 'own' : 'linked', linkId: item.linkId };
       try {
-        const served = await this.serve(t, 1, seed == null ? undefined : seed + i);
-        exercises.push({ exerciseId: id, name: t.name, generated: served.generated, question: served.questions[0] ?? null, note: served.note });
+        const served = await this.serve(t, item.count, seed == null ? undefined : seed + i);
+        for (const question of served.questions) exercises.push({ ...base, generated: served.generated, question, note: served.note });
       } catch (e) {
         // A template the generator cannot read (a variable without range, a broken formula) is shown as it is, with why.
         const note = (e as { response?: { message?: string } }).response?.message ?? (e as Error).message;
-        exercises.push({ exerciseId: id, name: t.name, generated: false, question: brief({ ...t, values: {}, answer: answerText(t) }), note: `Cannot generate: ${note}` });
+        exercises.push({ ...base, generated: false, question: brief({ ...t, values: {}, answer: answerText(t) }), note: `Cannot generate: ${note}` });
       }
     }
     return { data: { microLessonId, name: ml.name, exercises } };
+  }
+
+  // ---------- Part B links: one template feeds many quizzes (change 005) ----------
+
+  /** The templates linked to a micro lesson's quiz, in order. */
+  async links(microLessonId: number) {
+    await this.microLesson(microLessonId);
+    await this.needLinks();
+    return { data: await this.linkList('l.micro_lesson_id = $1', microLessonId) };
+  }
+
+  /** The quizzes a template exercise is linked to. */
+  async linksOfExercise(exerciseId: number) {
+    await this.needLinks();
+    await this.load(exerciseId);
+    return { data: await this.linkList('l.exercise_id = $1', exerciseId) };
+  }
+
+  /** Links a template exercise to a micro lesson's quiz (at the end, unless position is given). */
+  async link(microLessonId: number, body: Record<string, any>) {
+    await this.microLesson(microLessonId);
+    await this.needLinks();
+    const exerciseId = Number(body.exerciseId);
+    if (!Number.isInteger(exerciseId) || exerciseId < 1) throw new BadRequestException('exerciseId is required');
+    const count = countOf(body.questionCount ?? 1);
+    const t = await this.load(exerciseId);
+    if (!t.variables.length) throw new BadRequestException(`Exercise ${exerciseId} is not a template: it has no variables, so it would give the same question each time`);
+    const [own] = await this.prisma.$queryRawUnsafe<Row[]>('SELECT micro_lesson_id FROM bx_block_assessmenttest_assessments WHERE id = $1', exerciseId);
+    if (Number(own?.micro_lesson_id) === microLessonId) throw new BadRequestException('This exercise is already in the micro lesson, so its quiz already uses it');
+    const [dup] = await this.prisma.$queryRawUnsafe<Row[]>('SELECT id FROM question_template_links WHERE micro_lesson_id = $1 AND exercise_id = $2', microLessonId, exerciseId);
+    if (dup) throw new BadRequestException('This template is already linked to the micro lesson');
+    const position = body.position == null ? null : positionOf(body.position);
+    const [row] = await this.prisma.$queryRawUnsafe<Row[]>(
+      `INSERT INTO question_template_links (exercise_id, micro_lesson_id, position, question_count)
+       VALUES ($1, $2, COALESCE($3::int, (SELECT COALESCE(max(position), 0) + 1 FROM question_template_links WHERE micro_lesson_id = $2)), $4)
+       RETURNING id`,
+      exerciseId,
+      microLessonId,
+      position,
+      count,
+    );
+    return { data: (await this.linkList('l.id = $1', Number(row.id)))[0] };
+  }
+
+  /** Changes how many questions a link gives, or its position. */
+  async updateLink(microLessonId: number, linkId: number, body: Record<string, any>) {
+    await this.needLinks();
+    await this.linkOf(microLessonId, linkId);
+    const count = body.questionCount == null ? null : countOf(body.questionCount);
+    const position = body.position == null ? null : positionOf(body.position);
+    await this.prisma.$executeRawUnsafe(
+      'UPDATE question_template_links SET question_count = COALESCE($2::int, question_count), position = COALESCE($3::int, position), updated_at = now() WHERE id = $1',
+      linkId,
+      count,
+      position,
+    );
+    return { data: (await this.linkList('l.id = $1', linkId))[0] };
+  }
+
+  /** Removes a link (the template exercise stays). */
+  async unlink(microLessonId: number, linkId: number) {
+    await this.needLinks();
+    await this.linkOf(microLessonId, linkId);
+    await this.prisma.$executeRawUnsafe('DELETE FROM question_template_links WHERE id = $1', linkId);
+    return { data: { id: linkId, deleted: true } };
+  }
+
+  private async needLinks() {
+    if (!(await hasDbChange(this.prisma, 'templateLinks'))) {
+      throw new BadRequestException('Linking templates to quizzes needs database change 005 (question_template_links)');
+    }
+  }
+
+  private async linkRows(microLessonId: number): Promise<Row[]> {
+    if (!(await hasDbChange(this.prisma, 'templateLinks'))) return [];
+    return this.prisma.$queryRawUnsafe<Row[]>('SELECT id, exercise_id, question_count FROM question_template_links WHERE micro_lesson_id = $1 ORDER BY position, id', microLessonId);
+  }
+
+  private async linkOf(microLessonId: number, linkId: number) {
+    const [row] = await this.prisma.$queryRawUnsafe<Row[]>('SELECT id FROM question_template_links WHERE id = $1 AND micro_lesson_id = $2', linkId, microLessonId);
+    if (!row) throw new NotFoundException('Link not found');
+  }
+
+  private async linkList(where: string, id: number) {
+    const rows = await this.prisma.$queryRawUnsafe<Row[]>(
+      `SELECT l.id, l.exercise_id, a.name AS exercise_name, a.micro_lesson_id AS template_micro_lesson_id,
+              l.micro_lesson_id, m.name AS micro_lesson_name, l.position, l.question_count
+       FROM question_template_links l
+       JOIN bx_block_assessmenttest_assessments a ON a.id = l.exercise_id
+       JOIN bx_block_profile_micro_lessons m ON m.id = l.micro_lesson_id
+       WHERE ${where} ORDER BY l.micro_lesson_id, l.position, l.id`,
+      id,
+    );
+    return rows.map((r) => ({
+      id: Number(r.id),
+      exerciseId: Number(r.exercise_id),
+      exerciseName: r.exercise_name,
+      templateMicroLessonId: r.template_micro_lesson_id == null ? null : Number(r.template_micro_lesson_id),
+      microLessonId: Number(r.micro_lesson_id),
+      microLessonName: r.micro_lesson_name,
+      position: Number(r.position),
+      questionCount: Number(r.question_count),
+    }));
+  }
+
+  private async microLesson(microLessonId: number) {
+    const [ml] = await this.prisma.$queryRawUnsafe<Row[]>('SELECT id, name FROM bx_block_profile_micro_lessons WHERE id = $1', microLessonId);
+    if (!ml) throw new NotFoundException('Micro lesson not found');
+    return ml;
   }
 
   private async serve(t: LoadedTemplate, count: number, seed?: number) {
@@ -265,6 +392,17 @@ interface LoadedTemplate extends QuestionTemplate {
   questionId: number | null;
   questionbankType: string | null;
 }
+
+const countOf = (v: unknown) => {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 50) throw new BadRequestException('questionCount must be a whole number from 1 to 50');
+  return n;
+};
+const positionOf = (v: unknown) => {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1) throw new BadRequestException('position must be a whole number from 1');
+  return n;
+};
 
 const answerText = (t: QuestionTemplate) =>
   t.questionType === 3 || t.questionType === 5

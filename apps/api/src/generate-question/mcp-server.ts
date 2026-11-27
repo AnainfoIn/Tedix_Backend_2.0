@@ -161,12 +161,13 @@ export function createServer() {
         exerciseId: z.number().int().optional().describe('Or: an existing exercise to turn into this template (replaces its question)'),
         name: z.string().optional().describe('Exercise name (default: type and pattern, e.g. "Fill in the Blank: {{a}} + {{b}} = {{c}}")'),
         isAha: z.boolean().optional(),
+        linkTo: z.array(z.number().int()).optional().describe('Other micro lessons whose quizzes should also use the saved templates (see link_template_to_quiz)'),
       },
     },
     async (args) => {
       try {
         const data = await api('POST', 'workspace/question-templates', args);
-        const lines = (data.saved as Row[]).map((s) => `- Exercise ${s.exerciseId} "${s.name}" (${s.type}): ${plain(s.pattern)}; variables: ${s.variables.join('; ')}${s.sample ? `; e.g. ${plain(s.sample.questionBody ?? s.sample.question)} -> ${plain(s.sample.answer)}` : ''}`);
+        const lines = (data.saved as Row[]).map((s) => `- Exercise ${s.exerciseId} "${s.name}" (${s.type}): ${plain(s.pattern)}; variables: ${s.variables.join('; ')}${s.sample ? `; e.g. ${plain(s.sample.questionBody ?? s.sample.question)} -> ${plain(s.sample.answer)}` : ''}${s.links?.length ? `; linked to ${s.links.map((l: Row) => `"${l.microLessonName}"`).join(', ')}` : ''}`);
         const skipped = (data.skipped as Row[]).map((s) => `- "${s.example}": ${s.problem}`);
         return ok(`Saved ${lines.length} template exercise${lines.length === 1 ? '' : 's'}:\n${lines.join('\n')}${skipped.length ? `\nNot used:\n${skipped.join('\n')}` : ''}`, data);
       } catch (e) {
@@ -215,15 +216,15 @@ export function createServer() {
     'quiz_micro_lesson',
     {
       title: 'Quiz for a micro lesson',
-      description: 'Part B. One freshly generated question (with its answer) for every exercise of a micro lesson, as a quiz would get it. Template exercises get new numbers on every call.',
+      description: 'Part B. A quiz as a student would get it: one freshly generated question (with its answer) for every exercise of the micro lesson, then the questions of the templates linked to it. Template exercises get new numbers on every call.',
       inputSchema: { microLessonId: z.number().int(), seed: z.number().int().optional() },
     },
     async ({ microLessonId, seed }) => {
       try {
         const data = await api('GET', `workspace/micro_lessons/${microLessonId}/quiz${seed != null ? `?seed=${seed}` : ''}`);
         const rows = data.exercises as Row[];
-        const lines = rows.map((x, i) => `${i + 1}. [${x.generated ? 'generated' : 'fixed'}] ${x.name}: ${x.question ? questionLines([x.question]).replace(/^1\. /, '') : '(no question)'}${x.note ? `  (${x.note})` : ''}`);
-        return ok(`Quiz for "${data.name}" (${rows.length} exercises, ${rows.filter((x) => x.generated).length} generated):\n${lines.join('\n')}`, data);
+        const lines = rows.map((x, i) => `${i + 1}. [${x.generated ? 'generated' : 'fixed'}${x.source === 'linked' ? ', linked' : ''}] ${x.name}: ${x.question ? questionLines([x.question]).replace(/^1\. /, '') : '(no question)'}${x.note ? `  (${x.note})` : ''}`);
+        return ok(`Quiz for "${data.name}" (${rows.length} questions, ${rows.filter((x) => x.generated).length} generated):\n${lines.join('\n')}`, data);
       } catch (e) {
         return fail(e);
       }
@@ -262,6 +263,65 @@ export function createServer() {
         if (!data.variables.length) return ok(`Exercise ${exerciseId} (${data.questionbankType ?? 'no question'}) has no variables: it is the same every time.`, data);
         const problems = data.problems.length ? `\nProblems:\n- ${data.problems.join('\n- ')}` : '\nNo problems found.';
         return ok(`Exercise ${exerciseId} (${data.questionbankType}): ${plain(data.template.questionBody || data.template.question)}\nVariables: ${data.variables.join('; ')}${problems}`, data);
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  const linkLine = (l: Row) => `- link ${l.id}: exercise ${l.exerciseId} "${l.exerciseName}" -> micro lesson ${l.microLessonId} "${l.microLessonName}", position ${l.position}, ${l.questionCount} question${l.questionCount === 1 ? '' : 's'}`;
+
+  server.registerTool(
+    'link_template_to_quiz',
+    {
+      title: 'Link a template to a quiz',
+      description:
+        'Part B mapping. Links a template exercise to the quiz of another micro lesson, so one template feeds many quizzes; each time the quiz is opened it gets questionCount new questions from it. Ask the user before linking.',
+      inputSchema: {
+        exerciseId: z.number().int().describe('The template exercise (it must have variables)'),
+        microLessonId: z.number().int().describe('The micro lesson whose quiz should use it'),
+        questionCount: z.number().int().min(1).max(50).optional().describe('Questions per quiz (default 1)'),
+        position: z.number().int().min(1).optional().describe('Order among the linked templates (default: last)'),
+      },
+    },
+    async ({ microLessonId, ...body }) => {
+      try {
+        return ok(`Linked:\n${linkLine(await api('POST', `workspace/micro_lessons/${microLessonId}/template-links`, body))}`);
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_template_links',
+    {
+      title: 'List template links',
+      description: 'Part B mapping. The templates linked to a micro lesson quiz (microLessonId), or the quizzes a template exercise feeds (exerciseId).',
+      inputSchema: { microLessonId: z.number().int().optional(), exerciseId: z.number().int().optional() },
+    },
+    async ({ microLessonId, exerciseId }) => {
+      try {
+        if ((microLessonId == null) === (exerciseId == null)) throw new Error('Give microLessonId or exerciseId');
+        const rows = (await api('GET', microLessonId != null ? `workspace/micro_lessons/${microLessonId}/template-links` : `workspace/exercises/${exerciseId}/template-links`)) as unknown as Row[];
+        return ok(rows.length ? rows.map(linkLine).join('\n') : 'No links.', rows);
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'unlink_template_from_quiz',
+    {
+      title: 'Unlink a template from a quiz',
+      description: 'Part B mapping. Removes a link (from list_template_links); the template exercise stays. Ask the user first.',
+      inputSchema: { microLessonId: z.number().int(), linkId: z.number().int() },
+    },
+    async ({ microLessonId, linkId }) => {
+      try {
+        await api('DELETE', `workspace/micro_lessons/${microLessonId}/template-links/${linkId}`);
+        return ok(`Removed link ${linkId}.`);
       } catch (e) {
         return fail(e);
       }

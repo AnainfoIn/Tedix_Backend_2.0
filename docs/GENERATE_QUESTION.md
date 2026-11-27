@@ -3,7 +3,7 @@
 Turns example exercises such as `2+3=5` into templates, saves them as exercises, and serves them with
 new random numbers each time they are opened (for example in a quiz).
 
-**No database change.** Templates are stored the way the Rails app already stores them:
+Templates are stored the way the Rails app already stores them (no new column):
 
 | What | Where |
 | --- | --- |
@@ -14,6 +14,10 @@ new random numbers each time they are opened (for example in a quiz).
 
 So the editor, the Rails app and the existing 1,134 templates all keep working, and Part B also serves
 those existing templates.
+
+To use one template in many quizzes, Part B has a link table, `question_template_links` (database
+change 005, see [DB_CHANGES.md](DB_CHANGES.md)): template exercise, micro lesson, position and how many
+questions the quiz takes from it.
 
 ## Part A: examples to templates
 
@@ -39,6 +43,9 @@ For any exercise with variables: pick random values in range, compute formulas, 
 pass every filter, fill all `{{...}}` placeholders and options, and skip duplicates. A `seed` gives the
 same questions again. Exercises without variables are returned as written, with `generated: false`.
 
+A micro lesson's quiz is its own exercises in order (one question each), then the templates linked to
+it, each giving `questionCount` new questions. Every item says whether it is `own` or `linked`.
+
 Placeholders can be expressions (`{{a + b}}`, `{{2a}}`, `{{ae-bd}}`) and existing names such as `3a`,
 `max` or `dist_d1d2` are read as the data has them. Formulas support `+ - * / % ^ **`, brackets,
 comparisons and `min max abs round floor ceil sqrt`. There is no `eval`.
@@ -57,9 +64,14 @@ before they are saved.
 | POST | `question-templates` | manage micro_lessons | Part A and save (`microLessonId` for new exercises, or `exerciseId` to turn one into a template) |
 | GET | `exercises/:id/template` | read micro_lessons | The exercise as a template, with any problems |
 | GET | `exercises/:id/questions?count=15&seed=` | read micro_lessons | Part B: `count` questions with answers (max 200) |
-| GET | `micro_lessons/:id/quiz?seed=` | read micro_lessons | One question per exercise, in order, freshly generated |
+| GET | `micro_lessons/:id/quiz?seed=` | read micro_lessons | One question per exercise, in order, then the linked templates, freshly generated |
+| GET | `micro_lessons/:id/template-links` | read micro_lessons | The templates linked to the quiz (005) |
+| POST | `micro_lessons/:id/template-links` | manage micro_lessons | Link `{ exerciseId, questionCount?, position? }` (005) |
+| PATCH | `micro_lessons/:id/template-links/:linkId` | manage micro_lessons | Change `questionCount` or `position` (005) |
+| DELETE | `micro_lessons/:id/template-links/:linkId` | manage micro_lessons | Remove the link; the template stays (005) |
+| GET | `exercises/:id/template-links` | read micro_lessons | The quizzes a template feeds (005) |
 
-Request body for Part A:
+Request body for Part A (`linkTo` also links the saved templates to other quizzes, 005):
 
 ```json
 {
@@ -68,7 +80,8 @@ Request body for Part A:
   "ranges": { "a": [1, 20] },
   "constraints": ["a > b"],
   "count": 15,
-  "microLessonId": 12
+  "microLessonId": 12,
+  "linkTo": [14, 15]
 }
 ```
 
@@ -91,7 +104,8 @@ Tools:
 - `preview_question_templates`: Part A, runs locally, saves nothing.
 - `save_question_templates`: Part A and save through the API.
 - `generate_questions`: with `exerciseId`, Part B through the API; with examples, locally.
-- `quiz_micro_lesson`: a freshly generated quiz for a micro lesson.
+- `quiz_micro_lesson`: a freshly generated quiz for a micro lesson, with its linked templates.
+- `link_template_to_quiz`, `list_template_links`, `unlink_template_from_quiz`: the Part B links (005).
 - `find_micro_lessons`: search micro lessons by name, to get an id.
 - `get_exercise_template`: show an exercise's template and variables.
 

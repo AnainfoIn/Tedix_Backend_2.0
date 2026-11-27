@@ -69,7 +69,8 @@ The admin's Contents section uses the Rails tables (`account_block_countries`, `
 ## generateQuestion (exercises from examples) and its MCP server
 
 Give example exercises like `2+3=5`; they become templates (`{{a}} + {{b}} = {{c}}`) saved as exercises
-in the existing template format, served with new numbers each time. No database change. Setup and API: [docs/GENERATE_QUESTION.md](docs/GENERATE_QUESTION.md).
+in the existing template format, served with new numbers each time; one template can feed many
+quizzes through `question_template_links` (DB change 005). Setup and API: [docs/GENERATE_QUESTION.md](docs/GENERATE_QUESTION.md).
 
 ```bash
 TEDIX_API_URL=http://localhost:4000 TEDIX_ADMIN_EMAIL=you@example.com TEDIX_ADMIN_PASSWORD='...' npm run mcp
