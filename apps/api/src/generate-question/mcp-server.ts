@@ -1,7 +1,8 @@
 /**
- * generateQuestion MCP server (stdio): give it example exercises like "2+3=5" and it makes the
- * template ({a} + {b} = {c}), saves it as an exercise of a micro lesson, and generates fresh
- * questions with answers ("15 questions") whenever asked.
+ * generateQuestion MCP server (stdio).
+ *   Part A: give it example exercises like "2+3=5"; it makes the template ({{a}} + {{b}} = {{c}}) and
+ *           saves it as a template exercise of a micro lesson (existing tables: {{a}} text + variables).
+ *   Part B: call an exercise (or a micro lesson quiz) and get new questions with answers each time.
  *
  * Preview and generate-from-examples run here, without the API. Saving and reading saved
  * exercises go through the 2.0 admin API, so they follow the admin's permissions:
@@ -112,7 +113,7 @@ const range = z.union([
   z.object({ min: z.number().optional(), max: z.number().optional(), step: z.number().optional(), decimals: z.number().optional(), exclude: z.array(z.number()).optional() }),
 ]);
 const shared = {
-  examples: z.array(z.string()).optional().describe('Example exercises, one per item: "2+3=5", "12 - ? = 7", "3 × 4 = 12", "2, 4, 6, ?", or a template "{a}+{b}={c}". Examples with the same shape become one template.'),
+  examples: z.array(z.string()).optional().describe('Example exercises, one per item: "2+3=5", "12 - ? = 7", "3 × 4 = 12", "2, 4, 6, ?", or a template "{{a}}+{{b}}={{c}}". Examples with the same shape become one template.'),
   type: z.enum(['auto', 'fill_in_the_blank', 'single_choice', 'number_pattern']).optional().describe('Exercise type to make. auto: equations become Fill in the Blank, number lists become Number Pattern.'),
   ranges: z.record(z.string(), range).optional().describe('Ranges by variable, e.g. {"a": [1, 20], "b": {"min": 2, "max": 9}}. On the result variable (c) it is a condition, e.g. {"c": {"max": 20}}. Default: from the examples (2 gives 1-9, 25 gives 10-99).'),
   constraints: z.array(z.string()).optional().describe('Extra conditions every question must meet, e.g. ["a > b", "c <= 20"].'),
@@ -128,7 +129,7 @@ export function createServer() {
     {
       title: 'Preview question templates',
       description:
-        'Reads example exercises (like "2+3=5") and shows the template each one becomes ({a} + {b} = {c}), its exercise type, the number ranges, and sample questions with answers. Saves nothing. Use it first, then save_question_templates.',
+        'Part A. Reads example exercises (like "2+3=5") and shows the template each one becomes ({{a}} + {{b}} = {{c}}), its exercise type, the number ranges, and sample questions with answers. Saves nothing. Use it first, then save_question_templates.',
       inputSchema: { ...shared, examples: shared.examples.unwrap(), count: z.number().int().min(1).max(50).optional().describe('Sample questions per template (default 5)') },
     },
     async (args) => {
@@ -152,20 +153,20 @@ export function createServer() {
     {
       title: 'Save question templates',
       description:
-        'Saves the templates made from the examples as exercises of a micro lesson (one exercise per template), or into one existing exercise. Each saved exercise keeps the first example as its visible sample, and is served with new random numbers every time. Ask the user before saving.',
+        'Part A. Saves the templates made from the examples as template exercises of a micro lesson (one exercise per template), or into one existing exercise: the question with {{a}} placeholders and its variables (min, max, formula), as the existing template exercises are stored. Ask the user before saving.',
       inputSchema: {
         ...shared,
         template,
         microLessonId: z.number().int().optional().describe('Micro lesson to add the new exercises to (find it with find_micro_lessons)'),
         exerciseId: z.number().int().optional().describe('Or: an existing exercise to turn into this template (replaces its question)'),
-        name: z.string().optional().describe('Exercise name (default: type and pattern, e.g. "Fill in the Blank: {a} + {b} = {c}")'),
+        name: z.string().optional().describe('Exercise name (default: type and pattern, e.g. "Fill in the Blank: {{a}} + {{b}} = {{c}}")'),
         isAha: z.boolean().optional(),
       },
     },
     async (args) => {
       try {
         const data = await api('POST', 'workspace/question-templates', args);
-        const lines = (data.saved as Row[]).map((s) => `- Exercise ${s.exerciseId} "${s.name}" (${s.type}): ${plain(s.pattern)}; sample: ${plain(s.sample.questionBody ?? s.sample.question)} -> ${plain(s.sample.answer)}`);
+        const lines = (data.saved as Row[]).map((s) => `- Exercise ${s.exerciseId} "${s.name}" (${s.type}): ${plain(s.pattern)}; variables: ${s.variables.join('; ')}${s.sample ? `; e.g. ${plain(s.sample.questionBody ?? s.sample.question)} -> ${plain(s.sample.answer)}` : ''}`);
         const skipped = (data.skipped as Row[]).map((s) => `- "${s.example}": ${s.problem}`);
         return ok(`Saved ${lines.length} template exercise${lines.length === 1 ? '' : 's'}:\n${lines.join('\n')}${skipped.length ? `\nNot used:\n${skipped.join('\n')}` : ''}`, data);
       } catch (e) {
@@ -179,11 +180,11 @@ export function createServer() {
     {
       title: 'Generate questions',
       description:
-        'Makes new questions with their answers (default 15), each with different random numbers: from a saved template exercise (exerciseId), or straight from examples or a template without saving.',
+        'Part B. Makes new questions with their answers (default 15), each with different random numbers: from a saved exercise (exerciseId, works for every template exercise, old or new), or straight from examples or a template without saving.',
       inputSchema: {
         ...shared,
         template,
-        exerciseId: z.number().int().optional().describe('A saved template exercise'),
+        exerciseId: z.number().int().optional().describe('A saved exercise'),
         count: z.number().int().min(1).max(200).optional().describe('How many questions (default 15)'),
         seed: z.number().int().optional().describe('Same seed, same questions (for a repeatable set)'),
       },
@@ -192,8 +193,9 @@ export function createServer() {
       try {
         const count = args.count ?? 15;
         if (args.exerciseId != null) {
-          const data = await api('GET', `workspace/exercises/${args.exerciseId}/variants?count=${count}${args.seed != null ? `&seed=${args.seed}` : ''}`);
-          return ok(`${data.questions.length} questions from exercise ${args.exerciseId}${data.pattern ? ` (${plain(data.pattern)})` : ''}:\n${questionLines(data.questions)}${data.note ? `\nNote: ${data.note}` : ''}`, data);
+          const data = await api('GET', `workspace/exercises/${args.exerciseId}/questions?count=${count}${args.seed != null ? `&seed=${args.seed}` : ''}`);
+          const head = data.generated ? `${data.questions.length} questions from exercise ${args.exerciseId} "${data.name}"` : `Exercise ${args.exerciseId} "${data.name}" has no variables, so it is the same every time`;
+          return ok(`${head}:\n${questionLines(data.questions)}${data.note ? `\nNote: ${data.note}` : ''}`, data);
         }
         const req = parseRequest({ ...args, count });
         const { templates, skipped } = templatesOf(req);
@@ -203,6 +205,25 @@ export function createServer() {
         });
         const text = out.map((t) => `${t.type} — ${plain(t.pattern)}:\n${questionLines(t.questions)}${t.note ? `\nNote: ${t.note}` : ''}`).join('\n\n');
         return ok(text + (skipped.length ? `\n\nNot used:\n${skipped.map((s) => `- "${s.example}": ${s.problem}`).join('\n')}` : ''), { templates: out, skipped });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'quiz_micro_lesson',
+    {
+      title: 'Quiz for a micro lesson',
+      description: 'Part B. One freshly generated question (with its answer) for every exercise of a micro lesson, as a quiz would get it. Template exercises get new numbers on every call.',
+      inputSchema: { microLessonId: z.number().int(), seed: z.number().int().optional() },
+    },
+    async ({ microLessonId, seed }) => {
+      try {
+        const data = await api('GET', `workspace/micro_lessons/${microLessonId}/quiz${seed != null ? `?seed=${seed}` : ''}`);
+        const rows = data.exercises as Row[];
+        const lines = rows.map((x, i) => `${i + 1}. [${x.generated ? 'generated' : 'fixed'}] ${x.name}: ${x.question ? questionLines([x.question]).replace(/^1\. /, '') : '(no question)'}${x.note ? `  (${x.note})` : ''}`);
+        return ok(`Quiz for "${data.name}" (${rows.length} exercises, ${rows.filter((x) => x.generated).length} generated):\n${lines.join('\n')}`, data);
       } catch (e) {
         return fail(e);
       }
@@ -232,14 +253,15 @@ export function createServer() {
     'get_exercise_template',
     {
       title: 'Get exercise template',
-      description: 'Shows the template saved on an exercise (variables, ranges, texts), or says it is a normal exercise.',
+      description: 'Shows an exercise as a template: its variables (min, max, formula) and any problems (unknown {{placeholders}}, formulas that cannot be read).',
       inputSchema: { exerciseId: z.number().int() },
     },
     async ({ exerciseId }) => {
       try {
         const data = await api('GET', `workspace/exercises/${exerciseId}/template`);
-        if (!data.template) return ok(`Exercise ${exerciseId} is a normal exercise (no template).`);
-        return ok(`Exercise ${exerciseId}: ${plain(data.template.pattern ?? data.template.questionBody ?? data.template.question)}\nVariables: ${data.variables.join('; ')}`, data);
+        if (!data.variables.length) return ok(`Exercise ${exerciseId} (${data.questionbankType ?? 'no question'}) has no variables: it is the same every time.`, data);
+        const problems = data.problems.length ? `\nProblems:\n- ${data.problems.join('\n- ')}` : '\nNo problems found.';
+        return ok(`Exercise ${exerciseId} (${data.questionbankType}): ${plain(data.template.questionBody || data.template.question)}\nVariables: ${data.variables.join('; ')}${problems}`, data);
       } catch (e) {
         return fail(e);
       }

@@ -4,25 +4,25 @@ import { QuestionTemplate, TemplateError, TemplateGroup, TemplateVariable, check
 /**
  * generateQuestion, part A: turns example exercises into templates.
  *
- *   "2+3=5"            Fill in the Blank   {a} + {b} = [Blank]      answer {c}, c = a + b
- *   "12 - ? = 7"       Fill in the Blank   {a} - [Blank] = {c}      answer {b}
- *   "3 × 4 = 12"       (type single_choice) {a} \times {b} = ?      options {c}, {c - 1}, {c + 1}, {c + 2}
- *   "2, 4, 6, ?"       Number Pattern      terms {s}, {s + d}, ...  hidden term 4
- *   "{a}+{b}={c}"      a template typed directly (ranges from `ranges`, default 1 to 9)
+ *   "2+3=5"            Fill in the Blank   {{a}} + {{b}} = [Blank]    answer {{c}}, c = a + b
+ *   "12 - ? = 7"       Fill in the Blank   {{a}} - [Blank] = {{c}}    answer {{b}}
+ *   "3 × 4 = 12"       (type single_choice) {{a}} \times {{b}} = ?   options {{c}}, {{c - 1}}, {{c + 1}}, {{c + 2}}
+ *   "2, 4, 6, ?"       Number Pattern      terms {{s}}, {{s + d}}, ... hidden term 4
+ *   "{{a}}+{{b}}={{c}}" a template typed directly (ranges from `ranges`, default 1 to 9)
  *
  * Examples with the same shape (same signs in the same places) become one template; their numbers
  * set the ranges (2 and 7 give 1 to 9, 15 and 48 give 10 to 99).
  */
 export type DetectType = 'auto' | 'fill_in_the_blank' | 'single_choice' | 'number_pattern';
 
-export type RangeInput = { min?: number; max?: number; step?: number; decimals?: number; exclude?: number[] } | [number, number];
+export type RangeInput = { min?: number; max?: number } | [number, number];
 
 export interface DetectOptions {
   /** Exercise type to make; auto = Fill in the Blank for equations, Number Pattern for sequences. */
   type?: DetectType;
   /** Ranges by variable name, e.g. { a: [1, 20], c: { max: 20 } }. On a computed variable it is a condition. */
   ranges?: Record<string, RangeInput>;
-  /** Extra conditions, e.g. ["a > b"]. */
+  /** Extra conditions, e.g. ["a > b"]. Saved as formula variables cond1, cond2, ... that must be 1. */
   constraints?: string[];
   /** Own texts (may use placeholders); defaults are short English LaTeX texts like the existing exercises. */
   texts?: { question?: string; hint?: string; solution?: string };
@@ -31,7 +31,7 @@ export interface DetectOptions {
 export interface DetectedTemplate {
   /** Exercise type name, e.g. "Fill in the Blank". */
   typeName: string;
-  /** Readable pattern, e.g. "{a} + {b} = {c}". */
+  /** Readable pattern, e.g. "{{a}} + {{b}} = {{c}}". */
   pattern: string;
   examples: string[];
   template: QuestionTemplate;
@@ -93,13 +93,14 @@ function tokenize(example: string): Tok[] {
       i += num[0].length;
       continue;
     }
-    // "x" after a number is a times sign (3 x 4).
-    if ((c === 'x' || c === 'X') && operandBefore()) {
+    // "x" between numbers is a times sign (3 x 4); in "5x + 1" it is an unknown, which is not arithmetic.
+    if ((c === 'x' || c === 'X') && operandBefore() && /^[xX]\s*[\d(?{]/.test(rest)) {
       out.push({ t: 'op', op: '*', sym: '×' });
       i++;
       continue;
     }
-    const v = /^\{?\s*([A-Za-z][A-Za-z0-9_]*)\s*\}?/.exec(rest);
+    // A typed template names its variables in braces: {a} or {{a}}. Other letters (x^2 + 1 = 0) are not arithmetic.
+    const v = /^\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}/.exec(rest);
     if (v) {
       out.push({ t: 'var', name: v[1] });
       i += v[0].length;
@@ -145,7 +146,7 @@ const digits = (n: number) => String(Math.floor(Math.abs(n))).length;
 const lowOf = (v: number): number => (v === 0 ? 0 : v < 0 ? -highOf(-v) : digits(v) === 1 ? 1 : 10 ** (digits(v) - 1));
 const highOf = (v: number): number => (v < 0 ? -lowOf(-v) : 10 ** digits(v) - 1);
 
-function rangeFrom(values: number[], decimals: number, multiplier: boolean): Pick<TemplateVariable, 'type' | 'min' | 'max' | 'decimals'> {
+function rangeFrom(values: number[], decimals: number, multiplier: boolean): Pick<TemplateVariable, 'type' | 'min' | 'max'> {
   if (!values.length) return { type: 'integer', min: multiplier ? 2 : 1, max: 9 };
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -153,7 +154,7 @@ function rangeFrom(values: number[], decimals: number, multiplier: boolean): Pic
   const hi = highOf(max);
   // 1 and 0 make dull products and quotients unless an example used them.
   if (multiplier && lo === 1 && min >= 2) lo = 2;
-  if (decimals > 0) return { type: 'float', decimals, min: Math.min(lo, Math.floor(min)), max: hi + 1 - 10 ** -decimals };
+  if (decimals > 0) return { type: 'float', min: Math.min(lo, Math.floor(min)), max: hi + 1 - 10 ** -decimals };
   return { type: 'integer', min: lo, max: hi };
 }
 
@@ -163,18 +164,13 @@ function applyRange(v: TemplateVariable, r: RangeInput | undefined): TemplateVar
   const out = { ...v };
   if (o.min != null) out.min = Number(o.min);
   if (o.max != null) out.max = Number(o.max);
-  if (o.step != null) out.step = Number(o.step);
-  if (o.decimals != null) {
-    out.decimals = Number(o.decimals);
-    if (out.decimals > 0) out.type = 'float';
-  }
-  if (o.exclude) out.exclude = o.exclude.map(Number);
-  if (!Number.isInteger(out.min ?? 0) || !Number.isInteger(out.max ?? 0)) {
-    out.type = 'float';
-    out.decimals = out.decimals ?? 1;
-  }
+  if (!Number.isInteger(out.min ?? 0) || !Number.isInteger(out.max ?? 0)) out.type = 'float';
   return out;
 }
+
+/** Conditions become formula variables that must be 1 (a comparison gives 1 or 0). */
+const conditionVariables = (conditions: string[]): TemplateVariable[] =>
+  [...new Set(conditions)].map((c, i) => ({ name: `cond${i + 1}`, type: 'integer', formula: c, min: 1, max: 1 }));
 
 // ---------- equations ----------
 
@@ -291,13 +287,12 @@ function equationTemplate(all: Parsed[], type: DetectType, opts: DetectOptions, 
     const [a, b] = calcSlots.map((i) => nameOf.get(i)!);
     const aRange = rangeFrom(valuesOf(a), 0, true);
     variables.push(applyRange({ name: a, type: 'integer', formula: `${b} * ${resultName}`, min: rows.length ? aRange.min : null, max: rows.length ? aRange.max : null }, opts.ranges?.[a]));
-    variables.push(applyRange({ name: b, ...rangeFrom(valuesOf(b), 0, true), exclude: [0] }, opts.ranges?.[b]));
+    variables.push(applyRange({ name: b, ...rangeFrom(valuesOf(b), 0, true) }, opts.ranges?.[b]));
     variables.push(applyRange({ name: resultName, ...rangeFrom(valuesOf(resultName), 0, true) }, opts.ranges?.[resultName]));
   } else {
     for (const i of calcSlots) {
       const name = nameOf.get(i)!;
       const v: TemplateVariable = { name, ...rangeFrom(valuesOf(name), decimalsOf(i), nextToOp(i, ['*', '/', '^'])) };
-      if (divisor(i)) v.exclude = [0];
       if (exponent(i)) {
         // Small exponents, as in the examples: 2^3 gives exponents 2 to 3.
         const seen = valuesOf(name);
@@ -309,7 +304,6 @@ function equationTemplate(all: Parsed[], type: DetectType, opts: DetectOptions, 
     const res = valuesOf(resultName);
     const dec = Math.max(decimalsOf(resultSlot), ...calcSlots.map((i) => decimalsOf(i)));
     const result: TemplateVariable = { name: resultName, type: dec ? 'float' : 'integer', formula: calcExpr };
-    if (dec) result.decimals = dec;
     // No negative answers unless an example had one.
     if (!res.length || res.every((x) => x >= 0)) result.min = 0;
     variables.push(applyRange(result, opts.ranges?.[resultName]));
@@ -322,7 +316,7 @@ function equationTemplate(all: Parsed[], type: DetectType, opts: DetectOptions, 
   const show = (blank: string) =>
     toks
       .map((t, i) => {
-        if (isOperand(t)) return i === hiddenSlot ? blank : `{${nameOf.get(i)}}`;
+        if (isOperand(t)) return i === hiddenSlot ? blank : `{{${nameOf.get(i)}}}`;
         if (t.t === 'eq') return '=';
         if (t.op === '*') return t.sym === '·' || t.sym === '*' ? '\\cdot' : '\\times';
         if (t.op === '/') return t.sym === ':' ? ':' : t.sym === '/' ? '/' : '\\div';
@@ -331,8 +325,8 @@ function equationTemplate(all: Parsed[], type: DetectType, opts: DetectOptions, 
       .join(' ')
       .replace(/\( /g, '(')
       .replace(/ \)/g, ')')
-      .replace(/ \^ \{(\w+)\}/g, '^{{$1}}');
-  const full = show(`{${hidden}}`);
+      .replace(/ \^ (\{\{\w+\}\})/g, '^{$1}');
+  const full = show(`{{${hidden}}}`);
   const pattern = full.replace(/\\times/g, '×').replace(/\\cdot/g, '·').replace(/\\div/g, '÷');
   const mainOp = (toks.slice(calcRange[0], calcRange[1]).find((t) => t.t === 'op' && t.op !== '(' && t.op !== ')') as { op: string } | undefined)?.op;
   const hint =
@@ -343,6 +337,11 @@ function equationTemplate(all: Parsed[], type: DetectType, opts: DetectOptions, 
   const constraints = [...(opts.constraints ?? [])];
   const hiddenVar = variables.find((v) => v.name === hidden)!;
   const nonNegative = (hiddenVar.min ?? -1) >= 0;
+  // The wrong options are the answer - 1 and + 1, so the answer is at least 1 (no negative option).
+  const atLeastOne = () => {
+    if (hiddenVar.formula) hiddenVar.min = Math.max(hiddenVar.min ?? 1, 1);
+    else if ((hiddenVar.min ?? 0) < 1) constraints.push(`${hidden} >= 1`);
+  };
   let question: string;
   let questionBody: string | null;
   let groups: TemplateGroup[];
@@ -352,20 +351,20 @@ function equationTemplate(all: Parsed[], type: DetectType, opts: DetectOptions, 
     question = opts.texts?.question ?? show('?');
     questionBody = null;
     // Wrong options next to the answer; the answer must be at least 1 so none of them is negative.
-    if (nonNegative && !constraints.includes(`${hidden} >= 1`)) constraints.push(`${hidden} >= 1`);
-    groups = [{ shapeType: null, options: [`{${hidden}}`, `{${hidden} - 1}`, `{${hidden} + 1}`, `{${hidden} + 2}`].map((o, i) => ({ option: o, isCorrect: i === 0, sequenceNumber: i + 1 })) }];
+    if (nonNegative) atLeastOne();
+    groups = [{ shapeType: null, options: [`{{${hidden}}}`, `{{${hidden} - 1}}`, `{{${hidden} + 1}}`, `{{${hidden} + 2}}`].map((o, i) => ({ option: o, isCorrect: i === 0, sequenceNumber: i + 1 })) }];
   } else {
     questionType = 3;
     question = opts.texts?.question ?? '\\text{Fill in the blank.}';
     questionBody = show('[Blank]');
-    if (nonNegative && !constraints.includes(`${hidden} >= 1`)) constraints.push(`${hidden} >= 1`);
+    if (nonNegative) atLeastOne();
     groups = [
       {
         shapeType: null,
         options: [
-          { option: `{${hidden}}`, isCorrect: true, sequenceNumber: 1 },
-          { option: `{${hidden} + 1}`, isCorrect: false, sequenceNumber: null },
-          { option: `{${hidden} - 1}`, isCorrect: false, sequenceNumber: null },
+          { option: `{{${hidden}}}`, isCorrect: true, sequenceNumber: 1 },
+          { option: `{{${hidden} + 1}}`, isCorrect: false, sequenceNumber: null },
+          { option: `{{${hidden} - 1}}`, isCorrect: false, sequenceNumber: null },
         ],
       },
     ];
@@ -378,8 +377,7 @@ function equationTemplate(all: Parsed[], type: DetectType, opts: DetectOptions, 
     hint: opts.texts?.hint ?? hint,
     solution: opts.texts?.solution ?? full,
     groups,
-    variables,
-    constraints: constraints.length ? constraints : undefined,
+    variables: [...variables, ...conditionVariables(constraints)],
     shuffleOptions: questionType === 2 ? true : undefined,
     examples: group.map((g) => g.example),
     pattern,
@@ -449,12 +447,11 @@ function patternTemplate(group: Array<{ example: string; terms: Array<number | n
     hint: opts.texts?.hint ?? (kind === 'add' ? '\\text{Look at how much each term grows.}' : '\\text{Each term is the one before multiplied by the same number.}'),
     solution:
       opts.texts?.solution ??
-      (kind === 'add' ? `\\text{Each term adds } {d}\\text{, so the missing term is } {${termExpr(hide)}}.` : `\\text{Each term is multiplied by } {r}\\text{, so the missing term is } {${termExpr(hide)}}.`),
-    groups: [{ shapeType: null, options: Array.from({ length: n }, (_, i) => ({ option: `{${termExpr(i)}}`, isCorrect: i === hide, sequenceNumber: i + 1 })) }],
-    variables,
-    constraints: constraints.length ? constraints : undefined,
+      (kind === 'add' ? `\\text{Each term adds } {{d}}\\text{, so the missing term is } {{${termExpr(hide)}}}.` : `\\text{Each term is multiplied by } {{r}}\\text{, so the missing term is } {{${termExpr(hide)}}}.`),
+    groups: [{ shapeType: null, options: Array.from({ length: n }, (_, i) => ({ option: `{{${termExpr(i)}}}`, isCorrect: i === hide, sequenceNumber: i + 1 })) }],
+    variables: [...variables, ...conditionVariables(constraints)],
     examples: group.map((g) => g.example),
-    pattern: Array.from({ length: n }, (_, i) => (i === hide ? '?' : `{${termExpr(i)}}`)).join(', '),
+    pattern: Array.from({ length: n }, (_, i) => (i === hide ? '?' : `{{${termExpr(i)}}}`)).join(', '),
   };
   return { typeName: TYPE_NAMES[10], pattern: template.pattern!, examples: template.examples!, template, first: { s: starts[0], [stepName]: steps[0] } };
 }

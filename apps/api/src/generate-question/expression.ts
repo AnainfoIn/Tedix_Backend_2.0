@@ -57,9 +57,10 @@ function tokenize(src: string): Tok[] {
       i += id[0].length;
       continue;
     }
-    const op = /^(<=|>=|==|!=|[-+*/%^()<>,])/.exec(s.slice(i));
+    const op = /^(\*\*|<=|>=|==|!=|[-+*/%^()<>,])/.exec(s.slice(i));
     if (op) {
-      out.push({ t: 'op', v: op[0] });
+      // ** is a power too (as in Ruby and Python formulas).
+      out.push({ t: 'op', v: op[0] === '**' ? '^' : op[0] });
       i += op[0].length;
       continue;
     }
