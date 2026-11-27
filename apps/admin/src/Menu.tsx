@@ -2,6 +2,7 @@ import InsightsIcon from '@mui/icons-material/Insights';
 import { ANALYTICS_PAGES } from './analytics/AnalyticsPage';
 import ArticleOutlinedIcon from '@mui/icons-material/ArticleOutlined';
 import MenuBookOutlinedIcon from '@mui/icons-material/MenuBookOutlined';
+import QueryStatsIcon from '@mui/icons-material/QueryStats';
 import { Typography } from '@mui/material';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import ExpandMore from '@mui/icons-material/ExpandMore';
@@ -95,6 +96,9 @@ export function AppMenu() {
         <RouteItem entry={{ route: '/micro-lessons', label: 'Micro lessons', icon: <ArticleOutlinedIcon />, permission: 'micro_lessons', priority: 1 }} />
         <CurriculumNote />
       </PinnedSection>
+      <PinnedSection title="DataAnalytics" keepCase>
+        <RouteItem entry={{ route: '/data-analytics/generated-questions', label: 'Generated', icon: <QueryStatsIcon />, permission: 'lessons', priority: 0 }} />
+      </PinnedSection>
       {SHOW_OTHER_MENUS && (
         <PinnedSection title="More">
           {[...ENTRIES].filter(([, entries]) => entries.length).map(([name, entries]) => (
@@ -116,12 +120,13 @@ function CurriculumNote() {
   );
 }
 
-function PinnedSection({ title, children }: { title: string; children: ReactNode }) {
+/** keepCase: show the title as written (DataAnalytics is a name the team uses), not in capitals. */
+function PinnedSection({ title, children, keepCase }: { title: string; children: ReactNode; keepCase?: boolean }) {
   const [sidebarOpen] = useSidebarState();
   return (
     <>
       {sidebarOpen && (
-        <Typography color="text.secondary" sx={{ px: 2.5, pt: 1.75, pb: 0.75, display: 'block', fontSize: 11, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase' }}>{title}</Typography>
+        <Typography color="text.secondary" sx={{ px: 2.5, pt: 1.75, pb: 0.75, display: 'block', fontSize: 11, fontWeight: 600, letterSpacing: keepCase ? '.02em' : '.06em', textTransform: keepCase ? 'none' : 'uppercase' }}>{title}</Typography>
       )}
       {children}
     </>
