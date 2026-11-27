@@ -21,6 +21,10 @@ Always take a backup first (`pg_dump --format=custom --file=before-<nnn>.dump "$
 | 001 | Merge questions into exercises | 2026-11-26 (660 → 701 exercises, 21 split) | not applied yet |
 | 002 | Exercise translations (multilanguage) | 2026-11-26 (15 name, 51 question, 72 option translations moved) | not applied yet |
 | 003 | Exercise order and "Check type" flag | 2026-11-26 (346 flagged) | not applied yet |
+| 005 | Question template links (generateQuestion) | not applied yet (tested locally only) | not applied yet |
+
+There is no 004: an earlier draft (a template column on exercises) was dropped before it was applied
+anywhere; templates use the existing Rails columns instead.
 
 When a change is applied, write the date in the table above.
 
@@ -218,6 +222,50 @@ On the local copy: positions 1..n per micro lesson; 313 of 651 exercises flagged
 Challenge plus the 15 split ones); a Rails-style insert through the view lands at the end with
 no flag; down, up again, and a refused second run. The 2.0 e2e tests reorder, read the flag and
 clear it by saving, with and without the change.
+
+---
+
+## 005 Question template links (generateQuestion)
+
+Needs 001. For generateQuestion Part B ([GENERATE_QUESTION.md](GENERATE_QUESTION.md)): one template
+exercise can feed the quizzes of many micro lessons, and each time a quiz is opened the template gives
+new numbers.
+
+The template itself needs no new column: it is an exercise stored the way Rails already stores
+templates (`questionbank_type = 'template'`, `{{a}}` placeholders in the texts and options, rows in
+`bx_block_assessmenttest_variables`). The 1,467 template exercises on dev are served as they are.
+
+### What `up.sql` does
+
+Creates `question_template_links`:
+
+| Column | |
+| --- | --- |
+| `exercise_id` | the template exercise (`exercises.id`); deleting the exercise deletes its links |
+| `micro_lesson_id` | the micro lesson whose quiz uses it; deleting the micro lesson deletes its links |
+| `position` | order among the linked templates of that quiz (they come after the quiz's own exercises) |
+| `question_count` | how many generated questions the quiz takes from it, 1 to 50 (default 1) |
+
+One link per template and micro lesson (unique). A new table only: Rails, ActiveAdmin and the student
+app do not see it and are not affected. Running `up.sql` twice is refused.
+
+### Order of steps
+
+After 001: backup, `check-before.sql` (shows whether 001 is there and how many template exercises
+exist), then `up.sql`. The 2.0 backend checks whether the table exists: before 005 the quiz has only
+the micro lesson's own exercises, and the link endpoints answer "needs database change 005".
+
+### Undo
+
+`down.sql` drops the table (the template exercises stay).
+
+### How it was tested
+
+Local copy of dev only: up, refused second run, down, up again. The 2.0 e2e tests (with
+`TEST_DB_CHANGES=1`) link a template to another micro lesson with 3 questions, save a new template with
+`linkTo`, check the quiz gets 4 different generated questions, reorder, unlink, and check that deleting
+the template removes its links; without the change they check the "needs 005" answer. The MCP tools
+were run against a local API on the dev copy (save with linkTo, 15 questions, quiz, list, unlink).
 
 ---
 

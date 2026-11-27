@@ -18,7 +18,8 @@
     "test": "npm test -w apps/api",
     "test:e2e": "npm run test:e2e -w apps/api",
     "db:pull": "npm run prisma:pull -w apps/api",
-    "admin:create": "npm run admin:create -w apps/api --"
+    "admin:create": "npm run admin:create -w apps/api --",
+    "mcp": "npm run --silent mcp -w apps/api"
   },
   "main": "apps/api/dist/main.js"
 }

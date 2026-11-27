@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import request from 'supertest';
+import { ExerciseWriter } from '../src/generate-question/exercise-writer';
 import { AppModule } from '../src/app.module';
 import { setupApp } from '../src/setup-app';
 
@@ -81,7 +82,21 @@ describeDb('generic admin resources (e2e)', () => {
          SELECT '${email}', '${DEVISE_HASH}', id, now(), now() FROM roles WHERE name = '${role}'`,
       );
     }
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    // Pasted questions are read by Claude in production; here a fake answers like Claude would.
+    const writer = {
+      read: async (type: number, text: string) => {
+        if (text.includes('fail')) return { exercises: [], skipped: [{ text, reason: 'not a question' }] };
+        return {
+          exercises: [
+            { question: '\\text{Cat face 7 · 8?}', hint: '\\text{Tabla inmultirii}', solution: '7 · 8 = 56', options: ['54', '56', '58'], correct: 1 },
+            { question: '\\text{Capitala Frantei?}', hint: '', solution: 'Paris', options: ['Paris', 'Lyon'], correct: 0 },
+          ],
+          skipped: [{ text: 'Salut', reason: 'Not a question' }],
+          type,
+        };
+      },
+    };
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).overrideProvider(ExerciseWriter).useValue(writer).compile();
     app = moduleRef.createNestApplication();
     setupApp(app, { serveAdmin: false });
     await app.init();
@@ -108,6 +123,7 @@ describeDb('generic admin resources (e2e)', () => {
       get: (url: string) => request(server).get(`/admin/api${url}`).set(auth),
       post: (url: string, body: object) => request(server).post(`/admin/api${url}`).set(auth).send(body),
       put: (url: string, body: object) => request(server).put(`/admin/api${url}`).set(auth).send(body),
+      patch: (url: string, body: object) => request(server).patch(`/admin/api${url}`).set(auth).send(body),
       del: (url: string) => request(server).delete(`/admin/api${url}`).set(auth),
     };
   };
@@ -464,6 +480,139 @@ describeDb('generic admin resources (e2e)', () => {
     if (process.env.TEST_DB_CHANGES) expect(wsAdded.exercises.map((x: any) => x.id)).toEqual([sid, exercise.body.data.id, aid]);
     expect((await api().put(`/workspace/exercises/${aid}`, { ...editorBody(null, [{ options: [{ option: 'A', isCorrect: true, sequenceNumber: null }] }]), name: 'Third one' })).status).toBe(200);
     expect((await api().del(`/workspace/exercises/${aid}`)).status).toBe(200);
+
+    // generateQuestion. Part A: examples become template exercises in the existing tables ({{a}} text + variables).
+    const preview = await api().post('/workspace/question-templates/preview', { examples: ['2+3=5', '12 : 3 = 4', '2+3=6'], count: 3, seed: 1 });
+    expect(preview.status).toBe(201);
+    expect(preview.body.data.templates.map((t: any) => t.pattern)).toEqual(['{{a}} + {{b}} = {{c}}', '{{a}} : {{b}} = {{c}}']);
+    expect(preview.body.data.templates[0].questions[0]).toMatchObject({ questionBody: '2 + 3 = [Blank]', answer: '5' });
+    expect(preview.body.data.skipped.map((x: any) => x.example)).toEqual(['2+3=6']);
+    expect((await api().post('/workspace/question-templates/preview', { examples: ['hello'] })).status).toBe(400);
+    expect((await api().post('/workspace/question-templates/generate', { examples: ['2+3=5'], count: 15 })).body.data.templates[0].questions).toHaveLength(15);
+    expect((await api('viewer').post('/workspace/question-templates', { examples: ['2+3=5'], microLessonId: mlId })).status).toBe(403);
+    const tpl = await api().post('/workspace/question-templates', { examples: ['2+3=5', '7 - 4 = 3'], microLessonId: mlId });
+    expect(tpl.status).toBe(201);
+    const [add, sub] = tpl.body.data.saved;
+    expect(add).toMatchObject({ name: 'Fill in the Blank: {{a}} + {{b}} = {{c}}', sample: { questionBody: '2 + 3 = [Blank]', answer: '5' } });
+    const [q] = await prisma.$queryRawUnsafe<Record<string, any>[]>(
+      `SELECT id, questionbank_type, question_type, question_body FROM bx_block_assessmenttest_questionbanks WHERE assessment_id = ${add.exerciseId}`,
+    );
+    expect(q).toMatchObject({ questionbank_type: 'template', question_type: 3, question_body: '{{a}} + {{b}} = [Blank]' });
+    expect(await prisma.$queryRawUnsafe(`SELECT name, value_type, min_val, max_val, formula FROM bx_block_assessmenttest_variables WHERE questionbank_id = ${q.id} ORDER BY id`)).toEqual([
+      { name: 'a', value_type: 'integer', min_val: 1, max_val: 9, formula: null },
+      { name: 'b', value_type: 'integer', min_val: 1, max_val: 9, formula: null },
+      { name: 'c', value_type: 'integer', min_val: 1, max_val: null, formula: 'a + b' },
+    ]);
+    expect(
+      await prisma.$queryRawUnsafe(
+        `SELECT o.option, o.is_correct, o.sequence_number FROM bx_block_assessmenttest_answer_options o JOIN answer_option_groups g ON g.id = o.answer_option_group_id WHERE g.questionbank_id = ${q.id} ORDER BY o.id`,
+      ),
+    ).toEqual([
+      { option: '{{c}}', is_correct: true, sequence_number: 1 },
+      { option: '{{c + 1}}', is_correct: false, sequence_number: null },
+      { option: '{{c - 1}}', is_correct: false, sequence_number: null },
+    ]);
+    // Part B: each call gives new numbers, with the answer.
+    const served = await api().get(`/workspace/exercises/${add.exerciseId}/questions?count=15&seed=3`);
+    expect(served.status).toBe(200);
+    expect(served.body.data.generated).toBe(true);
+    expect(served.body.data.questions).toHaveLength(15);
+    expect(new Set(served.body.data.questions.map((x: any) => x.questionBody)).size).toBe(15);
+    for (const x of served.body.data.questions) {
+      expect(Number(x.answer)).toBe(x.values.a + x.values.b);
+      expect(x.questionBody).toBe(`${x.values.a} + ${x.values.b} = [Blank]`);
+    }
+    expect((await api('viewer').get(`/workspace/exercises/${add.exerciseId}/questions?count=2`)).status).toBe(200);
+    expect((await api().get(`/workspace/exercises/${add.exerciseId}/questions?count=0`)).status).toBe(400);
+    // An exercise without variables comes back as it is.
+    const fixed = (await api().get(`/workspace/exercises/${sid}/questions`)).body.data;
+    expect(fixed).toMatchObject({ generated: false });
+    expect(fixed.questions).toHaveLength(1);
+    // The quiz of the micro lesson: one question per exercise, the template ones filled in.
+    const quizRes = await api().get(`/workspace/micro_lessons/${mlId}/quiz?seed=1`);
+    expect(quizRes.status).toBe(200);
+    const quiz = quizRes.body.data;
+    const quizAdd = quiz.exercises.find((x: any) => x.exerciseId === add.exerciseId);
+    expect(quizAdd.generated).toBe(true);
+    expect(quizAdd.question.questionBody).not.toContain('{{');
+    expect(quiz.exercises.find((x: any) => x.exerciseId === sid).generated).toBe(false);
+    // Into an existing exercise: it keeps its name, its question and variables are replaced.
+    const into = await api().post('/workspace/question-templates', { examples: ['2, 4, 6, ?'], exerciseId: sub.exerciseId });
+    expect(into.body.data.saved[0]).toMatchObject({ exerciseId: sub.exerciseId, name: sub.name, type: 'Number Pattern' });
+    const tplRead = (await api().get(`/workspace/exercises/${sub.exerciseId}/template`)).body.data;
+    expect(tplRead.template.questionType).toBe(10);
+    expect(tplRead.template.variables.map((v: any) => v.name)).toEqual(['s', 'd']);
+    expect(tplRead.problems).toEqual([]);
+    expect((await api().post('/workspace/question-templates', { examples: ['2+3=5', '2,4,6,?'], exerciseId: sub.exerciseId })).status).toBe(400);
+    const again = await api().post('/workspace/question-templates', { examples: ['2+3=5'], microLessonId: mlId });
+    expect(again.body.data.saved[0].name).toBe('Fill in the Blank: {{a}} + {{b}} = {{c}} (2)');
+    // Part B links (change 005): one template feeds the quizzes of other micro lessons too.
+    const other = (await api().post('/micro_lessons', { ...tree, name: 'Adding practice', microLessonType: 1, description: 'Sums' })).body.data.id;
+    const linkUrl = `/workspace/micro_lessons/${other}/template-links`;
+    if (process.env.TEST_DB_CHANGES) {
+      expect((await api('viewer').post(linkUrl, { exerciseId: add.exerciseId })).status).toBe(403);
+      const link = await api().post(linkUrl, { exerciseId: add.exerciseId, questionCount: 3 });
+      expect(link.status).toBe(201);
+      expect(link.body.data).toMatchObject({ exerciseId: add.exerciseId, microLessonId: other, templateMicroLessonId: mlId, position: 1, questionCount: 3 });
+      expect((await api().post(linkUrl, { exerciseId: add.exerciseId })).body.message).toMatch(/already linked/);
+      expect((await api().post(linkUrl, { exerciseId: sid })).body.message).toMatch(/not a template/);
+      expect((await api().post(`/workspace/micro_lessons/${mlId}/template-links`, { exerciseId: add.exerciseId })).body.message).toMatch(/already in the micro lesson/);
+      expect((await api().post(linkUrl, { exerciseId: add.exerciseId, questionCount: 99 })).status).toBe(400);
+      // Saving with linkTo links the new template right away.
+      const linked = (await api().post('/workspace/question-templates', { examples: ['6 × 7 = 42'], microLessonId: mlId, linkTo: [other] })).body.data.saved[0];
+      expect(linked.links).toMatchObject([{ microLessonId: other, position: 2, questionCount: 1 }]);
+      expect((await api().get(linkUrl)).body.data.map((x: any) => x.exerciseId)).toEqual([add.exerciseId, linked.exerciseId]);
+      expect((await api().get(`/workspace/exercises/${add.exerciseId}/template-links`)).body.data.map((x: any) => x.microLessonId)).toEqual([other]);
+      // The other quiz: 3 new questions from the first template, 1 from the second.
+      const otherQuiz = (await api().get(`/workspace/micro_lessons/${other}/quiz`)).body.data.exercises;
+      expect(otherQuiz.map((x: any) => [x.exerciseId, x.source])).toEqual([
+        [add.exerciseId, 'linked'], [add.exerciseId, 'linked'], [add.exerciseId, 'linked'], [linked.exerciseId, 'linked'],
+      ]);
+      expect(new Set(otherQuiz.slice(0, 3).map((x: any) => x.question.questionBody)).size).toBe(3);
+      expect(otherQuiz.every((x: any) => x.generated && !x.question.questionBody.includes('{{'))).toBe(true);
+      const upd = await api().patch(`${linkUrl}/${link.body.data.id}`, { questionCount: 2, position: 5 });
+      expect(upd.body.data).toMatchObject({ questionCount: 2, position: 5 });
+      expect((await api().get(linkUrl)).body.data.map((x: any) => x.exerciseId)).toEqual([linked.exerciseId, add.exerciseId]);
+      expect((await api().del(`${linkUrl}/${link.body.data.id}`)).status).toBe(200);
+      expect((await api().del(`${linkUrl}/${link.body.data.id}`)).status).toBe(404);
+      // Deleting the template exercise removes its links.
+      expect((await api().del(`/workspace/exercises/${linked.exerciseId}`)).status).toBe(200);
+      expect((await api().get(linkUrl)).body.data).toEqual([]);
+    } else {
+      expect((await api().post(linkUrl, { exerciseId: add.exerciseId })).body.message).toMatch(/needs database change 005/);
+      expect((await api().get(`/workspace/micro_lessons/${other}/quiz`)).body.data.exercises).toEqual([]);
+    }
+    expect((await api().del(`/micro_lessons/${other}`)).status).toBe(200);
+    // Paste questions in "Add an exercise": arithmetic lines become templates (Part A), the rest is read by Claude.
+    const imp = '/workspace/question-templates/import';
+    expect((await api('viewer').post(`${imp}/preview`, { type: 2, text: '2+3=5' })).status).toBe(403);
+    expect((await api().post(`${imp}/preview`, { type: 9, text: '2+3=5' })).status).toBe(400);
+    expect((await api().post(`${imp}/preview`, { type: 2, text: '  ' })).status).toBe(400);
+    const arith = (await api().post(`${imp}/preview`, { type: 7, text: '2+3=5\n7+1=8\n9-4=5' })).body.data;
+    expect(arith.source).toBe('template');
+    expect(arith.items.map((x: any) => x.pattern)).toEqual(['{{a}} + {{b}} = {{c}}', '{{a}} - {{b}} = {{c}}']);
+    const read = (await api().post(`${imp}/preview`, { type: 2, text: 'Cat face 7 x 8? 56\nCapitala Frantei? Paris\nSalut' })).body.data;
+    expect(read.source).toBe('claude');
+    expect(read.skipped).toEqual([{ text: 'Salut', reason: 'Not a question' }]);
+    expect(read.items[0]).toMatchObject({ kind: 'exercise', problems: [], question: { questionType: 2, groups: [{ options: [{ option: '<p>54</p>' }, { option: '<p>56</p>', isCorrect: true }, { option: '<p>58</p>' }] }] } });
+    expect(read.items[1].problems).toEqual(['Hint is missing']);
+    // Same lines with generate: false go to Claude too.
+    expect((await api().post(`${imp}/preview`, { type: 7, text: '2+3=5', generate: false })).body.data.source).toBe('claude');
+    expect((await api().post(`${imp}/preview`, { type: 2, text: 'fail' })).status).toBe(400);
+    // Save: the template, the good question; the one without a hint is refused by the editor's checks.
+    const savedImp = (await api().post(imp, { microLessonId: mlId, items: [
+      { ...arith.items[0], name: 'Imported 1' },
+      { ...read.items[0], name: 'Imported 2' },
+      { ...read.items[1], name: 'Imported 3' },
+    ] })).body.data;
+    expect(savedImp.created.map((x: any) => [x.name, x.kind])).toEqual([['Imported 1', 'template'], ['Imported 2', 'exercise']]);
+    expect(savedImp.failed).toMatchObject([{ index: 2, name: 'Imported 3' }]);
+    expect(await prisma.$queryRawUnsafe(`SELECT name FROM bx_block_assessmenttest_assessments WHERE name LIKE 'Imported%' ORDER BY id`)).toEqual([{ name: 'Imported 1' }, { name: 'Imported 2' }]);
+    const opened = (await api().get(`/workspace/exercises/${savedImp.created[1].exerciseId}/questions`)).body.data;
+    expect(opened.questions[0]).toMatchObject({ answer: '<p>56</p>' });
+    expect((await api().get(`/workspace/exercises/${savedImp.created[0].exerciseId}/questions?count=3`)).body.data.generated).toBe(true);
+    for (const x of savedImp.created) expect((await api().del(`/workspace/exercises/${x.exerciseId}`)).status).toBe(200);
+    for (const id of [add.exerciseId, sub.exerciseId, again.body.data.saved[0].exerciseId]) expect((await api().del(`/workspace/exercises/${id}`)).status).toBe(200);
 
     expect((await api().del(`/workspace/exercises/${sid}`)).status).toBe(200);
     expect(await prisma.$queryRawUnsafe(`SELECT id FROM bx_block_assessmenttest_assessments WHERE id = ${sid}`)).toEqual([]);

@@ -11,6 +11,8 @@ const CHECKS: Record<string, string> = {
   exercises: `SELECT to_regclass('exercises') IS NOT NULL AS ok`,
   // 003: exercises.position / needs_review
   exerciseOrder: `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'exercises' AND column_name = 'position') AS ok`,
+  // 005: question_template_links (generateQuestion Part B: templates linked to quizzes)
+  templateLinks: `SELECT to_regclass('question_template_links') IS NOT NULL AS ok`,
 };
 
 export type DbChange = keyof typeof CHECKS;
