@@ -21,7 +21,7 @@ Always take a backup first (`pg_dump --format=custom --file=before-<nnn>.dump "$
 | 001 | Merge questions into exercises | 2026-11-26 (660 → 701 exercises, 21 split) | not applied yet |
 | 002 | Exercise translations (multilanguage) | 2026-11-26 (15 name, 51 question, 72 option translations moved) | not applied yet |
 | 003 | Exercise order and "Check type" flag | 2026-11-26 (346 flagged) | not applied yet |
-| 005 | Question template links (generateQuestion) | not applied yet (tested locally only) | not applied yet |
+| 005 | Question template links (generateQuestion) | 2026-11-27 (table created empty; backup dev-before-005-20261127-1153.dump) | not applied yet |
 
 There is no 004: an earlier draft (a template column on exercises) was dropped before it was applied
 anywhere; templates use the existing Rails columns instead.
