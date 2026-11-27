@@ -9,6 +9,7 @@ import {
 } from 'react-admin';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError, apiFetch } from '../api';
+import { AddExerciseDialog } from './AddExerciseDialog';
 import { ExerciseEditor } from './ExerciseEditor';
 import { TYPES, typeOf } from './exerciseModel';
 import { FilesPane } from './FilesPane';
@@ -258,6 +259,9 @@ function ExerciseList(props: {
   const [filter, setFilter] = useState<number | 'all'>('all');
   const [order, setOrder] = useState<number[]>(() => ws.exercises.map((e) => e.id));
   const [dragId, setDragId] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
+  // Exercise just made with "Add exercise": its editor opens with the type picked there.
+  const [created, setCreated] = useState<{ id: number; questionType: number } | null>(null);
   useEffect(() => setOrder(ws.exercises.map((e) => e.id)), [ws.exercises]);
 
   const byId = new Map(ws.exercises.map((e) => [e.id, e]));
@@ -312,8 +316,7 @@ function ExerciseList(props: {
         {toReview > 0 && <Chip size="small" label={`${toReview} need${toReview === 1 ? 's' : ''} a type check`} sx={tag('#FFF4E0', '#8A4B00')} />}
         <Box sx={{ flex: 1 }} />
         {props.canEdit && (
-          <MuiButton variant="outlined" size="small" startIcon={<AddIcon />} component={Link}
-            to={`/exercises/create?source=${encodeURIComponent(JSON.stringify({ microLessonId: record.id }))}`}>
+          <MuiButton variant="outlined" size="small" startIcon={<AddIcon />} onClick={() => setAdding(true)}>
             Add exercise
           </MuiButton>
         )}
@@ -330,6 +333,7 @@ function ExerciseList(props: {
             if (props.open === e.id) {
               return (
                 <ExerciseEditor key={e.id} ws={ws} exerciseId={e.id} language={language} original={props.original} isOriginal={isOriginal} canEdit={props.canEdit}
+                  initialType={created?.id === e.id ? created.questionType : undefined}
                   onSaved={props.onSaved} onClose={() => props.onOpen(null)} onLanguage={props.onLanguage} />
               );
             }
@@ -366,6 +370,19 @@ function ExerciseList(props: {
             );
           })}
         </Box>
+      )}
+      {adding && (
+        <AddExerciseDialog microLessonId={record.id} microLessonName={ws.lesson.name} names={ws.exercises.map((e) => e.name ?? '')}
+          onClose={() => setAdding(false)}
+          onCreated={async (id, questionType) => {
+            setCreated({ id, questionType });
+            setFilter('all');
+            await props.onSaved();
+            setAdding(false);
+            if (!isOriginal && props.original) props.onLanguage(props.original.id);
+            props.onOpen(id);
+            notify('Exercise added. Fill in its content and save.', { type: 'info' });
+          }} />
       )}
     </Card>
   );

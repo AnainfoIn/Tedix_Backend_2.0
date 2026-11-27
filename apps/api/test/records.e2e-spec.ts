@@ -447,6 +447,24 @@ describeDb('generic admin resources (e2e)', () => {
       expect(order.status).toBe(400);
       expect((await api().get(`/workspace/micro_lessons/${mlId}`)).body.data.canReorder).toBe(false);
     }
+    // "Add exercise" dialog: creates the exercise (hierarchy from the micro lesson, last in the list), no question yet.
+    expect((await api().post('/workspace/exercises', { microLessonId: mlId, name: 'x' })).status).toBe(400);
+    expect((await api().post('/workspace/exercises', { microLessonId: mlId, name: 'second EDITED' })).body.message).toBe('Name has already been taken for this micro lesson');
+    expect((await api().post('/workspace/exercises', { microLessonId: 999999, name: 'Third' })).status).toBe(404);
+    const added = await api().post('/workspace/exercises', { microLessonId: mlId, name: '  Third   one ', isAha: true });
+    expect(added.status).toBe(201);
+    const aid = added.body.data.id;
+    const [addedRow] = await prisma.$queryRawUnsafe<Record<string, any>[]>(
+      `SELECT a.name, a.is_aha, a.category_type, a.lesson_id = m.lesson_id AND a.unit_id = m.unit_id AS same_place
+       FROM bx_block_assessmenttest_assessments a JOIN bx_block_profile_micro_lessons m ON m.id = a.micro_lesson_id WHERE a.id = ${aid}`,
+    );
+    expect(addedRow).toEqual({ name: 'Third one', is_aha: true, category_type: 0, same_place: true });
+    const wsAdded = (await api().get(`/workspace/micro_lessons/${mlId}`)).body.data;
+    expect(wsAdded.exercises.find((x: any) => x.id === aid)).toMatchObject({ name: 'Third one', questions: [] });
+    if (process.env.TEST_DB_CHANGES) expect(wsAdded.exercises.map((x: any) => x.id)).toEqual([sid, exercise.body.data.id, aid]);
+    expect((await api().put(`/workspace/exercises/${aid}`, { ...editorBody(null, [{ options: [{ option: 'A', isCorrect: true, sequenceNumber: null }] }]), name: 'Third one' })).status).toBe(200);
+    expect((await api().del(`/workspace/exercises/${aid}`)).status).toBe(200);
+
     expect((await api().del(`/workspace/exercises/${sid}`)).status).toBe(200);
     expect(await prisma.$queryRawUnsafe(`SELECT id FROM bx_block_assessmenttest_assessments WHERE id = ${sid}`)).toEqual([]);
 

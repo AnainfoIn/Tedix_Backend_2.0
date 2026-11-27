@@ -17,6 +17,8 @@ import {
 type Props = {
   ws: Workspace; exerciseId: number; language: Language | null; original: Language | null; isOriginal: boolean; canEdit: boolean;
   onSaved: () => Promise<void> | void; onClose: () => void; onLanguage: (id: number) => void;
+  /** Type picked in "Add exercise" for an exercise that has no question yet. */
+  initialType?: number;
 };
 
 /**
@@ -222,9 +224,13 @@ function starter(questionType: number): DGroup[] {
 function OriginalEditor(props: Inner) {
   const { exercise, question, original, canEdit } = props;
   const notify = useNotify();
-  const base = useMemo(() => draftOf(exercise, question), [exercise, question]);
+  const initialType = question ? undefined : props.initialType;
+  const base = useMemo(() => {
+    const draft = draftOf(exercise, question);
+    return initialType == null ? draft : { ...draft, questionType: initialType, groups: starter(initialType) };
+  }, [exercise, question, initialType]);
   const [d, setD] = useState<Draft>(base);
-  const [picked, setPicked] = useState<number | null>(question ? question.questionType : null);
+  const [picked, setPicked] = useState<number | null>(question ? question.questionType : initialType ?? null);
   const [busy, setBusy] = useState<null | 'save' | 'delete'>(null);
   const [confirm, setConfirm] = useState<null | 'delete' | 'close'>(null);
   const [serverProblems, setServerProblems] = useState<string[]>([]);
